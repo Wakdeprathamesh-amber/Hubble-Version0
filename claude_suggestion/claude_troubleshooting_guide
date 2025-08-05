@@ -1,0 +1,279 @@
+# Slack Bot Troubleshooting Guide
+
+## Quick Diagnostic Steps
+
+### 1. Run the Debug Script
+First, save and run the debug script to check your basic configuration:
+
+```bash
+python debug_slack.py
+```
+
+### 2. Check Your Logs
+Look for the log file that should be created:
+```bash
+tail -f slack_bot.log
+```
+
+### 3. Test Your Endpoints
+```bash
+# Test if server is running
+curl http://localhost:3000/
+
+# Test health endpoint
+curl http://localhost:3000/health
+
+# Test Slack events endpoint
+curl http://localhost:3000/slack/events
+```
+
+## Common Issues and Solutions
+
+### Issue 1: No Logs Appearing
+**Symptoms:** Application seems to run but no logs in terminal
+
+**Possible Causes:**
+- Logging configuration issues
+- Application not actually running
+- Output being redirected
+
+**Solutions:**
+1. Check if process is running:
+   ```bash
+   ps aux | grep python | grep app.py
+   ```
+
+2. Try running with explicit output:
+   ```bash
+   python app.py 2>&1 | tee output.log
+   ```
+
+3. Check the log file:
+   ```bash
+   cat slack_bot.log
+   ```
+
+### Issue 2: Bot Not Responding to Messages
+**Symptoms:** Bot receives events but doesn't respond
+
+**Check These Items:**
+
+#### A. Environment Variables
+Ensure these are set in your `.env` file:
+```
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_SIGNING_SECRET=your-signing-secret
+TARGET_CHANNEL_ID=C1234567890
+```
+
+#### B. Slack App Configuration
+In your Slack app settings (api.slack.com/apps):
+
+1. **OAuth & Permissions** → Bot Token Scopes:
+   - `channels:read`
+   - `channels:history`
+   - `chat:write`
+   - `im:history` (if handling DMs)
+
+2. **Event Subscriptions**:
+   - Enable Events: ✓
+   - Request URL: `https://your-domain.com/slack/events`
+   - Subscribe to Bot Events:
+     - `message.channels`
+     - `message.im` (if needed)
+
+3. **Install App** to your workspace
+
+#### C. Channel Access
+- Invite your bot to the target channel: `/invite @your-bot-name`
+- Verify channel ID is correct (right-click channel → copy link, ID is at the end)
+
+### Issue 3: URL Verification Failing
+**Symptoms:** Slack shows "Event subscription request failed"
+
+**Solutions:**
+1. Make sure your server is publicly accessible (use ngrok for testing):
+   ```bash
+   ngrok http 3000
+   ```
+
+2. Update Slack app Request URL to ngrok URL:
+   `https://abcd1234.ngrok.io/slack/events`
+
+3. Test the endpoint manually:
+   ```bash
+   curl -X POST https://your-domain.com/slack/events \
+     -H "Content-Type: application/json" \
+     -d '{"type":"url_verification","challenge":"test123"}'
+   ```
+
+### Issue 4: 403 or Authentication Errors
+**Symptoms:** Bot token or signing secret issues
+
+**Solutions:**
+
+1. **Regenerate tokens** in Slack app settings
+2. **Update .env file** with new tokens
+3. **Restart your application**
+4. **Test authentication**:
+   ```bash
+   curl -H "Authorization: Bearer xoxb-your-token" \
+     https://slack.com/api/auth.test
+   ```
+
+### Issue 5: Events Not Reaching Your Server
+**Symptoms:** No events in logs, URL verification works
+
+**Check:**
+
+1. **Slack Event Subscriptions** are enabled
+2. **Bot events** are subscribed to `message.channels`
+3. **Request URL** is correct and accessible
+4. **Bot is installed** in the workspace
+5. **Bot is member** of the target channel
+
+## Testing Your Setup
+
+### 1. Test Server Locally
+```bash
+# Start your server
+python app.py
+
+# In another terminal, test endpoints
+curl http://localhost:3000/
+curl http://localhost:3000/health
+curl http://localhost:3000/test
+```
+
+### 2. Test Message Processing
+```bash
+curl -X POST http://localhost:3000/test/message \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event": {
+      "channel": "YOUR_CHANNEL_ID",
+      "user": "U1234567890",
+      "text": "Test message",
+      "ts": "1234567890.123"
+    }
+  }'
+```
+
+### 3. Simulate Slack Event
+```bash
+curl -X POST http://localhost:3000/slack/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "event_callback",
+    "event": {
+      "type": "message",
+      "channel": "YOUR_CHANNEL_ID",
+      "user": "U1234567890",
+      "text": "Hello bot!",
+      "ts": "1234567890.123"
+    }
+  }'
+```
+
+## Step-by-Step Verification
+
+### Step 1: Verify Environment
+```bash
+python -c "
+from dotenv import load_dotenv
+import os
+load_dotenv()
+print('Bot Token:', 'SET' if os.getenv('SLACK_BOT_TOKEN') else 'MISSING')
+print('Signing Secret:', 'SET' if os.getenv('SLACK_SIGNING_SECRET') else 'MISSING')
+print('Channel ID:', os.getenv('TARGET_CHANNEL_ID'))
+"
+```
+
+### Step 2: Verify Server
+```bash
+# Check if server is running
+netstat -tlnp | grep :3000
+
+# Test basic connectivity
+curl -i http://localhost:3000/
+```
+
+### Step 3: Verify Slack Configuration
+1. Go to https://api.slack.com/apps
+2. Select your app
+3. Check "Event Subscriptions" → Request URL shows as "Verified ✓"
+4. Check "OAuth & Permissions" → Bot is installed
+5. Check channel membership: `/apps` in your Slack channel
+
+### Step 4: Test End-to-End
+1. Send a message in your target channel
+2. Check server logs for incoming events
+3. Verify ticket creation in `/tickets` endpoint
+
+## Debugging Tips
+
+### Enable Verbose Logging
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+```
+
+### Check Network Connectivity
+```bash
+# If using ngrok
+curl https://your-ngrok-url.ngrok.io/slack/events
+
+# Check firewall
+sudo ufw status
+```
+
+### Monitor Real-time Logs
+```bash
+# Terminal 1: Run your app
+python app.py
+
+# Terminal 2: Watch logs
+tail -f slack_bot.log
+
+# Terminal 3: Test requests
+curl http://localhost:3000/test
+```
+
+### Common Environment Issues
+```bash
+# Check Python path
+which python
+python --version
+
+# Check installed packages
+pip list | grep -E "(flask|slack|bolt)"
+
+# Verify .env file location
+ls -la .env
+cat .env
+```
+
+## When Everything Else Fails
+
+1. **Create a minimal test**:
+   ```python
+   from flask import Flask
+   app = Flask(__name__)
+   
+   @app.route('/test')
+   def test():
+       return 'Hello World'
+   
+   if __name__ == '__main__':
+       app.run(port=3000, debug=True)
+   ```
+
+2. **Check Slack API status**: https://status.slack.com/
+
+3. **Use Slack's Event Subscriptions debugger** in your app settings
+
+4. **Try a different bot token** (regenerate in Slack app settings)
+
+5. **Check your server's public IP/domain** is accessible from Slack's servers
+
+Remember: The most common issue is that the bot hasn't been invited to the channel or doesn't have the right permissions!

@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""
+Debug script to help diagnose Slack bot issues
+Run this to check your environment and configuration
+"""
+
+import os
+import json
+import requests
+from dotenv import load_dotenv
+
+def check_environment():
+    """Check if all required environment variables are set"""
+    print("=== ENVIRONMENT VARIABLES ===")
+    load_dotenv()
+    
+    required_vars = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "TARGET_CHANNEL_ID"]
+    missing_vars = []
+    
+    for var in required_vars:
+        value = os.environ.get(var)
+        if value:
+            if var == "SLACK_BOT_TOKEN":
+                print(f"✓ {var}: {value[:10]}...")
+            elif var == "SLACK_SIGNING_SECRET":
+                print(f"✓ {var}: {value[:10]}...")
+            else:
+                print(f"✓ {var}: {value}")
+        else:
+            print(f"✗ {var}: NOT SET")
+            missing_vars.append(var)
+    
+    if missing_vars:
+        print(f"\n⚠️  Missing environment variables: {', '.join(missing_vars)}")
+        return False
+    else:
+        print("\n✓ All environment variables are set")
+        return True
+
+def test_slack_auth():
+    """Test if the Slack bot token is valid"""
+    print("\n=== SLACK AUTHENTICATION TEST ===")
+    token = os.environ.get("SLACK_BOT_TOKEN")
+    
+    if not token:
+        print("✗ No SLACK_BOT_TOKEN found")
+        return False
+    
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get("https://slack.com/api/auth.test", headers=headers)
+        data = response.json()
+        
+        if data.get("ok"):
+            print(f"✓ Bot authenticated successfully")
+            print(f"  Bot User ID: {data.get('user_id')}")
+            print(f"  Bot Name: {data.get('user')}")
+            print(f"  Team: {data.get('team')}")
+            return True
+        else:
+            print(f"✗ Authentication failed: {data.get('error')}")
+            return False
+    except Exception as e:
+        print(f"✗ Error testing authentication: {str(e)}")
+        return False
+
+def check_channel_access():
+    """Check if the bot has access to the target channel"""
+    print("\n=== CHANNEL ACCESS TEST ===")
+    token = os.environ.get("SLACK_BOT_TOKEN")
+    channel_id = os.environ.get("TARGET_CHANNEL_ID")
+    
+    if not token or not channel_id:
+        print("✗ Missing token or channel ID")
+        return False
+    
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        # Try to get channel info
+        response = requests.get(
+            f"https://slack.com/api/conversations.info?channel={channel_id}",
+            headers=headers
+        )
+        data = response.json()
+        
+        if data.get("ok"):
+            channel = data.get("channel", {})
+            print(f"✓ Channel found: #{channel.get('name')}")
+            print(f"  Channel ID: {channel.get('id')}")
+            print(f"  Is Member: {channel.get('is_member', False)}")
+            
+            if not channel.get('is_member'):
+                print("⚠️  Bot is not a member of this channel!")
+                print("   You need to invite the bot to the channel with: /invite @your-bot-name")
+                return False
+            return True
+        else:
+            print(f"✗ Cannot access channel: {data.get('error')}")
+            if data.get('error') == 'channel_not_found':
+                print("   Check if the TARGET_CHANNEL_ID is correct")
+            elif data.get('error') == 'not_in_channel':
+                print("   Bot needs to be invited to the channel")
+            return False
+    except Exception as e:
+        print(f"✗ Error checking channel access: {str(e)}")
+        return False
+
+def test_server_endpoint():
+    """Test if the Flask server is responding"""
+    print("\n=== SERVER ENDPOINT TEST ===")
+    port = os.environ.get("PORT", "3000")
+    base_url = f"http://localhost:{port}"
+    
+    try:
+        # Test home endpoint
+        response = requests.get(f"{base_url}/", timeout=5)
+        if response.status_code == 200:
+            print(f"✓ Server is running on port {port}")
+            print(f"  Response: {response.json()}")
+        else:
+            print(f"✗ Server responded with status {response.status_code}")
+            return False
+            
+        # Test slack events endpoint
+        response = requests.get(f"{base_url}/slack/events", timeout=5)
+        if response.status_code == 200:
+            print("✓ Slack events endpoint is accessible")
+        else:
+            print(f"✗ Slack events endpoint returned {response.status_code}")
+            
+        return True
+    except requests.exceptions.ConnectionError:
+        print(f"✗ Cannot connect to server on port {port}")
+        print("   Make sure your Flask app is running")
+        return False
+    except Exception as e:
+        print(f"✗ Error testing server: {str(e)}")
+        return False
+
+def check_slack_app_config():
+    """Provide checklist for Slack app configuration"""
+    print("\n=== SLACK APP CONFIGURATION CHECKLIST ===")
+    print("Please verify these settings in your Slack app configuration:")
+    print("1. ✓ Event Subscriptions are enabled")
+    print("2. ✓ Request URL is set to: https://your-domain.com/slack/events")
+    print("3. ✓ Bot Events include 'message.channels' or 'message.im'")
+    print("4. ✓ OAuth & Permissions include:")
+    print("   - channels:read")
+    print("   - chat:write")
+    print("   - channels:history")
+    print("5. ✓ Bot is installed to your workspace")
+    print("6. ✓ Bot is invited to the target channel")
+
+def main():
+    print("🔍 Slack Bot Debug Tool")
+    print("=" * 50)
+    
+    # Run all checks
+    env_ok = check_environment()
+    if not env_ok:
+        print("\n❌ Fix environment variables first, then re-run this script")
+        return
+    
+    auth_ok = test_slack_auth()
+    channel_ok = check_channel_access()
+    server_ok = test_server_endpoint()
+    
+    print("\n" + "=" * 50)
+    print("🔍 DIAGNOSIS SUMMARY")
+    print("=" * 50)
+    
+    if auth_ok and channel_ok and server_ok:
+        print("✅ All basic checks passed!")
+        print("If you're still not receiving messages, check:")
+        print("1. Slack app Event Subscriptions configuration")
+        print("2. Your ngrok/tunnel URL is correct and accessible")
+        print("3. Try sending a test message to trigger events")
+    else:
+        print("❌ Issues found:")
+        if not auth_ok:
+            print("   - Slack authentication failed")
+        if not channel_ok:
+            print("   - Channel access issues")
+        if not server_ok:
+            print("   - Server connectivity issues")
+    
+    check_slack_app_config()
+
+if __name__ == "__main__":
+    main()

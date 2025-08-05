@@ -32,14 +32,30 @@ class SheetsService:
         Initialize the Google Sheets service.
         
         Args:
-            credentials_path (str): Path to the service account credentials JSON file
+            credentials_path (str): Path to the service account credentials JSON file or JSON content
             spreadsheet_id (str): ID of the Google Spreadsheet to use
         """
         self.spreadsheet_id = spreadsheet_id
-        self.credentials = service_account.Credentials.from_service_account_file(
-            credentials_path,
-            scopes=['https://www.googleapis.com/auth/spreadsheets']
-        )
+        
+        # Handle credentials from file or environment variable
+        if os.path.exists(credentials_path):
+            # Load from file (local development)
+            self.credentials = service_account.Credentials.from_service_account_file(
+                credentials_path,
+                scopes=['https://www.googleapis.com/auth/spreadsheets']
+            )
+        else:
+            # Load from environment variable (production)
+            import json
+            credentials_json = os.environ.get('GOOGLE_CREDENTIALS')
+            if not credentials_json:
+                raise ValueError("GOOGLE_CREDENTIALS environment variable not set")
+            
+            credentials_info = json.loads(credentials_json)
+            self.credentials = service_account.Credentials.from_service_account_info(
+                credentials_info,
+                scopes=['https://www.googleapis.com/auth/spreadsheets']
+            )
         self.service = build('sheets', 'v4', credentials=self.credentials)
         self.sheet = self.service.spreadsheets()
         

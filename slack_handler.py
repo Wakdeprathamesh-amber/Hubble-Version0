@@ -137,11 +137,91 @@ class SlackHandler:
                 if event.get("bot_id"):
                     return
                 
-                # Check if this is from the target channel
-                target_channel = os.environ.get("TARGET_CHANNEL_ID")
+                # Check if this is a channel message (not DM, not group DM)
+                # The bot will work in any channel it's invited to
+                if not channel_id.startswith('D') and not channel_id.startswith('G') and user_id and text:
+                    logger.info(f"🎫 CREATING TICKET: Channel={channel_id}, User={user_id}")
+                    
+                    # Get user's real name from Slack
+                    user_name = f"@{user_id}"  # Default fallback
+                    try:
+                        user_info = self.slack_app.client.users_info(user=user_id)
+                        if user_info["ok"]:
+                            user = user_info["user"]
+                            real_name = user.get("real_name", user.get("name", f"@{user_id}"))
+                            user_name = f"@{real_name}"  # Add @ symbol
+                        logger.info(f"🎫 USER NAME: {user_name}")
+                    except Exception as e:
+                        logger.error(f"❌ Error getting user name: {str(e)}")
+                    
+                    # Create a ticket
+                    ticket_id = self.ticket_service.create_ticket(
+                        message_text=text,
+                        requester_id=user_id,
+                        requester_name=user_name,  # Pass the real name
+                        timestamp=ts,
+                        thread_ts=ts,  # Use the message timestamp as thread_ts
+                        channel_id=channel_id,
+                        priority='Medium'
+                    )
+                    
+                    # Send confirmation message with ticket details in a thread
+                    response = f"""
+:ticket: *Ticket #{ticket_id} has been created*
+
+**Hubble has logged your ticket.**
+We've recorded the details and notified the relevant team. You can track progress right here in this thread.
+
+🔍 Use the button below to view or update ticket information - including status, assignee, and priority.
+"""
+                    
+                    # Create buttons for ticket actions
+                    blocks = [
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": response
+                            }
+                        },
+                        {
+                            "type": "actions",
+                            "elements": [
+                                {
+                                    "type": "button",
+                                    "text": {
+                                        "type": "plain_text",
+                                        "text": "View & Edit Ticket"
+                                    },
+                                    "style": "primary",
+                                    "action_id": "view_edit_ticket",
+                                    "value": ticket_id
+                                },
+                                {
+                                    "type": "button",
+                                    "text": {
+                                        "type": "plain_text",
+                                        "text": "Close Ticket"
+                                    },
+                                    "style": "danger",
+                                    "action_id": "close_ticket",
+                                    "value": ticket_id
+                                }
+                            ]
+                        }
+                    ]
+                    
+                    # Send the response in a thread
+                    say(
+                        text=response,
+                        blocks=blocks,
+                        thread_ts=ts
+                    )
+                    
+                    logger.info(f"✅ Ticket #{ticket_id} created successfully in channel {channel_id}")
                 
                 # Handle thread replies (update first response)
-                if thread_ts:
+                elif thread_ts:
                     logger.info(f"🧵 THREAD REPLY: Channel={channel_id}, User={user_id}")
                     
                     # Get the ticket for this thread
@@ -184,87 +264,6 @@ class SlackHandler:
                         logger.info(f"ℹ️ Ticket {ticket['ticket_id']} already has first response")
                     else:
                         logger.warning(f"⚠️ No ticket found for thread_ts: {thread_ts}")
-                    return
-                
-                # Handle original messages (create tickets)
-                if channel_id == target_channel and user_id and text:
-                    logger.info(f"🎫 CREATING TICKET: Channel={channel_id}, User={user_id}")
-                    
-                    # Get user's real name from Slack
-                    user_name = f"@{user_id}"  # Default fallback
-                    try:
-                        user_info = self.slack_app.client.users_info(user=user_id)
-                        if user_info["ok"]:
-                            user = user_info["user"]
-                            real_name = user.get("real_name", user.get("name", f"@{user_id}"))
-                            user_name = f"@{real_name}"  # Add @ symbol
-                        logger.info(f"🎫 USER NAME: {user_name}")
-                    except Exception as e:
-                        logger.error(f"❌ Error getting user name: {str(e)}")
-                    
-                    # Create a ticket
-                    ticket_id = self.ticket_service.create_ticket(
-                        message_text=text,
-                        requester_id=user_id,
-                        requester_name=user_name,  # Pass the real name
-                        timestamp=ts,
-                        thread_ts=ts,  # Use the message timestamp as thread_ts
-                        channel_id=channel_id,
-                        priority='Medium'
-                    )
-                    
-                    # Send confirmation message with ticket details in a thread
-                    response = f"""
-:ticket: *Ticket #{ticket_id} has been created*
-
-**Hubble has logged your ticket.**
-We've recorded the details and notified the relevant team. You can track progress right here in this thread.
-
-🔍 Use the button below to view or update ticket information - including status, assignee, and priority.
-
-*Hubble: See it. Sort it. Solve it.*
-"""
-                    say(
-                        text=response,
-                        thread_ts=ts,  # Reply in thread
-                        blocks=[
-                            {
-                                "type": "section",
-                                "text": {
-                                    "type": "mrkdwn",
-                                    "text": response
-                                }
-                            },
-                            {
-                                "type": "actions",
-                                "elements": [
-                                    {
-                                        "type": "button",
-                                        "text": {
-                                            "type": "plain_text",
-                                            "text": "View & Edit",
-                                            "emoji": True
-                                        },
-                                        "style": "primary",
-                                        "value": ticket_id,
-                                        "action_id": "view_edit_ticket"
-                                    },
-                                    {
-                                        "type": "button",
-                                        "text": {
-                                            "type": "plain_text",
-                                            "text": "✅ Close Ticket",
-                                            "emoji": True
-                                        },
-                                        "style": "danger",
-                                        "value": ticket_id,
-                                        "action_id": "close_ticket"
-                                    }
-                                ]
-                            }
-                        ]
-                    )
-                    logger.info(f"✅ Created ticket #{ticket_id} for user {user_id}")
                     
             except Exception as e:
                 logger.error(f"❌ Error handling message event: {str(e)}", exc_info=True)

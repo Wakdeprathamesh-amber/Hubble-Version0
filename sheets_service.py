@@ -83,13 +83,13 @@ class SheetsService:
             # Get current headers
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A1:J1'
+                range=f'{self.sheet_name}!A1:K1'
             ).execute()
             
             values = result.get('values', [])
             
             # If no headers exist or they're not correct, set them up
-            if not values or len(values[0]) != 10:
+            if not values or len(values[0]) != 11:
                 headers = [
                     'Ticket ID',
                     'Thread Link',
@@ -100,7 +100,8 @@ class SheetsService:
                     'Thread Created At TS',
                     'First Response Time',
                     'Resolved At',
-                    'Message'
+                    'Message',
+                    'Channel ID'
                 ]
                 
                 body = {
@@ -110,12 +111,12 @@ class SheetsService:
                 # Clear existing content and set new headers
                 self.sheet.values().clear(
                     spreadsheetId=self.spreadsheet_id,
-                    range=f'{self.sheet_name}!A1:J'
+                    range=f'{self.sheet_name}!A1:K'
                 ).execute()
                 
                 self.sheet.values().update(
                     spreadsheetId=self.spreadsheet_id,
-                    range=f'{self.sheet_name}!A1:J1',
+                    range=f'{self.sheet_name}!A1:K1',
                     valueInputOption='RAW',
                     body=body
                 ).execute()
@@ -164,7 +165,8 @@ class SheetsService:
             current_time,                               # Thread Created At TS
             '',                                         # First Response Time (empty initially)
             '',                                         # Resolved At (empty initially)
-            ticket_data.get('description', '')          # Message
+            ticket_data.get('description', ''),         # Message
+            ticket_data.get('channel_id', '')           # Channel ID
         ]
 
         body = {
@@ -175,7 +177,7 @@ class SheetsService:
             # Append the row to the sheet
             self.sheet.values().append(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A:J',
+                range=f'{self.sheet_name}!A:K',
                 valueInputOption='RAW',
                 insertDataOption='INSERT_ROWS',
                 body=body
@@ -215,7 +217,7 @@ class SheetsService:
         try:
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A2:J'  # Skip header row
+                range=f'{self.sheet_name}!A2:K'  # Skip header row, include new channel column
             ).execute()
 
             values = result.get('values', [])
@@ -223,7 +225,7 @@ class SheetsService:
 
             for row in values:
                 # Ensure row has all required fields, pad with empty strings if needed
-                row = row + [''] * (10 - len(row))  # Pad row to have 10 columns
+                row = row + [''] * (11 - len(row))  # Pad row to have 11 columns
                 
                 if row[0]:  # Only process rows that have a ticket ID
                     ticket_id = row[0].strip()
@@ -237,7 +239,8 @@ class SheetsService:
                         'created_at': row[6],
                         'first_response': row[7],
                         'resolved_at': row[8],
-                        'message': row[9]
+                        'message': row[9],
+                        'channel_id': row[10]  # New channel ID column
                     }
                     # Keep the most recent version (last occurrence)
                     ticket_dict[ticket_id] = ticket
@@ -268,7 +271,7 @@ class SheetsService:
                 return False
             
             # Get all rows to find the ticket
-            range_name = f"{self.sheet_name}!A2:J"
+            range_name = f"{self.sheet_name}!A2:K"
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
                 range=range_name
@@ -345,7 +348,7 @@ class SheetsService:
         """
         try:
             # Get all rows to find the ticket
-            range_name = f"{self.sheet_name}!A2:J"
+            range_name = f"{self.sheet_name}!A2:K"
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
                 range=range_name
@@ -415,7 +418,7 @@ class SheetsService:
                 return False
             
             # Get all rows to find the ticket
-            range_name = f"{self.sheet_name}!A2:J"
+            range_name = f"{self.sheet_name}!A2:K"
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
                 range=range_name
@@ -480,7 +483,7 @@ class SheetsService:
             # Get all rows
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A2:J'
+                range=f'{self.sheet_name}!A2:K'
             ).execute()
             
             values = result.get('values', [])
@@ -536,7 +539,7 @@ class SheetsService:
         """
         try:
             # Get all rows to find the ticket
-            range_name = f"{self.sheet_name}!A2:J"
+            range_name = f"{self.sheet_name}!A2:K"
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
                 range=range_name
@@ -601,7 +604,7 @@ class SheetsService:
             # Clear all data
             self.sheet.values().clear(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A:J'
+                range=f'{self.sheet_name}!A:K'
             ).execute()
             
             # Set up new headers
@@ -615,7 +618,8 @@ class SheetsService:
                 'Thread Created At TS',
                 'First Response Time',
                 'Resolved At',
-                'Message'
+                'Message',
+                'Channel ID'
             ]
             
             body = {
@@ -625,7 +629,7 @@ class SheetsService:
             # Update with new headers
             self.sheet.values().update(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A1:J1',
+                range=f'{self.sheet_name}!A1:K1',
                 valueInputOption='RAW',
                 body=body
             ).execute()
@@ -661,7 +665,7 @@ class SheetsService:
             print(f"   Description: {description[:50]}...")
             
             # Get all rows to find the ticket
-            range_name = f"{self.sheet_name}!A2:J"
+            range_name = f"{self.sheet_name}!A2:K"
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
                 range=range_name

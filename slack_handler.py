@@ -187,7 +187,7 @@ class SlackHandler:
                     return
                 
                 # Handle original messages (create tickets)
-                if channel_id == target_channel and user_id and text:
+                if user_id and text:
                     logger.info(f"🎫 CREATING TICKET: Channel={channel_id}, User={user_id}")
                     
                     # Get user's real name from Slack

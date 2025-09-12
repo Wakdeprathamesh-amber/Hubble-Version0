@@ -132,14 +132,30 @@ class SlackHandler:
                 text = event.get("text", "")
                 ts = event.get("ts")
                 thread_ts = event.get("thread_ts")  # Check if this is a thread reply
+                subtype = event.get("subtype")
                 
                 # Skip if this is a bot message
                 if event.get("bot_id"):
                     return
                 
+                # Ignore message subtypes like edits or joins to avoid false ticket creation
+                if subtype:
+                    logger.debug(f"Ignoring message with subtype={subtype}")
+                    return
+                
                 # Check if this is a channel message (not DM, not group DM)
                 # The bot will work in any channel it's invited to
-                if not channel_id.startswith('D') and not channel_id.startswith('G') and user_id and text:
+                # Only create tickets for top-level messages (not thread replies)
+                target_channel = os.environ.get("TARGET_CHANNEL_ID")
+
+                if (
+                    not channel_id.startswith('D')
+                    and not channel_id.startswith('G')
+                    and user_id
+                    and text
+                    and not thread_ts  # ensure this is not a reply in a thread
+                    and (not target_channel or channel_id == target_channel)  # restrict to TARGET_CHANNEL_ID if set
+                ):
                     logger.info(f"🎫 CREATING TICKET: Channel={channel_id}, User={user_id}")
                     
                     # Get user's real name from Slack
@@ -160,7 +176,7 @@ class SlackHandler:
                         requester_id=user_id,
                         requester_name=user_name,  # Pass the real name
                         timestamp=ts,
-                        thread_ts=ts,  # Use the message timestamp as thread_ts
+                        thread_ts=ts,  # Use the message timestamp as thread_ts for the new thread root
                         channel_id=channel_id,
                         priority='Medium'
                     )
@@ -698,8 +714,10 @@ We've recorded the details and notified the relevant team. You can track progres
                     
                     if ticket and thread_ts:
                         try:
+                            # Prefer the ticket's original channel, fallback to TARGET_CHANNEL_ID
+                            post_channel = ticket.get("channel_id") or os.environ.get("TARGET_CHANNEL_ID")
                             client.chat_postMessage(
-                                channel=os.environ.get("TARGET_CHANNEL_ID"),
+                                channel=post_channel,
                                 thread_ts=thread_ts,
                                 text=update_message
                             )

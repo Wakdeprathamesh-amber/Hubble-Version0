@@ -146,15 +146,12 @@ class SlackHandler:
                 # Check if this is a channel message (not DM, not group DM)
                 # The bot will work in any channel it's invited to
                 # Only create tickets for top-level messages (not thread replies)
-                target_channel = os.environ.get("TARGET_CHANNEL_ID")
-
                 if (
                     not channel_id.startswith('D')
                     and not channel_id.startswith('G')
                     and user_id
                     and text
                     and not thread_ts  # ensure this is not a reply in a thread
-                    and (not target_channel or channel_id == target_channel)  # restrict to TARGET_CHANNEL_ID if set
                 ):
                     logger.info(f"🎫 CREATING TICKET: Channel={channel_id}, User={user_id}")
                     

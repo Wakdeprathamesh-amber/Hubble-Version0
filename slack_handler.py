@@ -32,6 +32,17 @@ class SlackHandler:
         logger.info(f"Signing Secret: {os.environ.get('SLACK_SIGNING_SECRET')[:10]}...")
         logger.info(f"Target Channel: {os.environ.get('TARGET_CHANNEL_ID')}")
     
+    def _is_admin(self, user_id: str) -> bool:
+        """
+        Check if a user is an admin based on ADMIN_USER_IDS env (comma-separated Slack user IDs).
+        """
+        try:
+            admin_ids = os.environ.get("ADMIN_USER_IDS", "")
+            admin_list = [uid.strip() for uid in admin_ids.split(",") if uid.strip()]
+            return user_id in admin_list
+        except Exception:
+            return False
+
     def _register_commands(self):
         @self.slack_app.command("/ticket-status")
         def handle_ticket_status(ack, body, say):
@@ -293,6 +304,19 @@ We've recorded the details and notified the relevant team. You can track progres
                 ticket_id = body["actions"][0]["value"]
                 user_id = body["user"]["id"]
                 
+                # Permission check: only admins can close
+                if not self._is_admin(user_id):
+                    try:
+                        say(
+                            text="❌ Only admins can close tickets.",
+                            channel=body.get("channel", {}).get("id"),
+                            user=user_id,
+                            thread_ts=body.get("message", {}).get("thread_ts") or body.get("message", {}).get("ts")
+                        )
+                    except Exception:
+                        pass
+                    return
+
                 logger.info(f"🔧 CLOSE TICKET: Ticket {ticket_id} by user {user_id}")
                 
                 # Get thread_ts from the message
@@ -357,14 +381,17 @@ We've recorded the details and notified the relevant team. You can track progres
                 
                 logger.info(f"View & Edit button clicked for ticket {ticket_id} by user {user_id}")
                 
-                # Check if user has permission (channel owner or admin)
-                if not self._has_edit_permission(user_id, body["channel"]["id"]):
+                # Check if user has permission (admin only)
+                if not self._is_admin(user_id):
                     # Send error message
-                    client.chat_postEphemeral(
-                        channel=body["channel"]["id"],
-                        user=user_id,
-                        text="❌ You don't have permission to edit this ticket. Only channel owners and admins can modify tickets."
-                    )
+                    try:
+                        client.chat_postEphemeral(
+                            channel=body["channel"]["id"],
+                            user=user_id,
+                            text="❌ Only admins can view or edit tickets."
+                        )
+                    except Exception:
+                        pass
                     return
                 
                 # Get ticket data
@@ -614,6 +641,16 @@ We've recorded the details and notified the relevant team. You can track progres
             """Handle modal submission for ticket editing"""
             try:
                 logger.info("🔧 view_submission received for ticket_edit_modal")
+                # Permission check: only admins can submit modal
+                submitting_user_id = body["user"]["id"]
+                if not self._is_admin(submitting_user_id):
+                    ack({
+                        "response_action": "errors",
+                        "errors": {
+                            "description": "Only admins can update tickets."
+                        }
+                    })
+                    return
                 
                 # Acknowledge the modal submission immediately with success response
                 ack({

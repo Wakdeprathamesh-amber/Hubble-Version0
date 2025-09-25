@@ -256,6 +256,21 @@ def handle_view_edit_ticket_direct(payload):
         ticket_id = payload['actions'][0]['value']
         
         logger.info(f"🔧 Direct handling: View & Edit for ticket {ticket_id} by user {user_id}")
+
+        # Admin enforcement using env ADMIN_USER_IDS
+        admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
+        if user_id not in admin_ids:
+            from slack_sdk import WebClient
+            client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
+            try:
+                client.chat_postEphemeral(
+                    channel=payload['channel']['id'],
+                    user=user_id,
+                    text="❌ Only admins can view or edit tickets."
+                )
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": "not_admin"})
         
         # Get ticket data from sheet
         tickets = slack_handler.ticket_service.get_all_tickets()
@@ -488,6 +503,21 @@ def handle_close_ticket_direct(payload):
         thread_ts = payload['message']['thread_ts']
         
         logger.info(f"Direct handling: Close ticket {ticket_id} by user {user_id}")
+
+        # Admin enforcement using env ADMIN_USER_IDS
+        admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
+        if user_id not in admin_ids:
+            from slack_sdk import WebClient
+            client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
+            try:
+                client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="❌ Only admins can close tickets."
+                )
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": "not_admin"})
         
         # Update ticket status
         success = slack_handler.ticket_service.update_ticket_status(ticket_id, "Closed")

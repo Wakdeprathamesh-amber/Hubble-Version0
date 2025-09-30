@@ -188,6 +188,40 @@ class SheetsService:
             print(f"Error appending ticket: {str(e)}")
             return False
 
+    def get_channel_config_map(self) -> Dict[str, Dict[str, str]]:
+        """
+        Read per-channel configuration from a 'Config' sheet tab.
+        Expected headers (row 1):
+        Channel ID | Admin User IDs (CSV) | Default Assignee | Priorities (CSV) | Modal Template Key
+
+        Returns:
+            Dict[channel_id, settings_dict]
+        """
+        try:
+            # Try to read the Config tab; if missing, return empty
+            result = self.sheet.values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range='Config!A2:E'
+            ).execute()
+
+            values = result.get('values', [])
+            config_map: Dict[str, Dict[str, str]] = {}
+            for row in values:
+                row = row + [''] * (5 - len(row))
+                channel_id = row[0].strip()
+                if not channel_id:
+                    continue
+                config_map[channel_id] = {
+                    'admin_user_ids': row[1].strip(),
+                    'default_assignee': row[2].strip(),
+                    'priorities': row[3].strip(),
+                    'modal_template_key': row[4].strip(),
+                }
+            return config_map
+        except Exception as e:
+            print(f"Error reading Config tab: {str(e)}")
+            return {}
+
     def _get_default_assignee(self, channel_id: str) -> str:
         """
         Get the default assignee based on the channel ID.

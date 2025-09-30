@@ -43,6 +43,20 @@ class SlackHandler:
         except Exception:
             return False
 
+    def _is_channel_admin(self, user_id: str, channel_id: str) -> bool:
+        """
+        Check if user is an admin for the given channel using Config tab if available; fallback to global env.
+        """
+        try:
+            config_map = self.ticket_service.sheets_service.get_channel_config_map()
+            channel_cfg = config_map.get(channel_id)
+            if channel_cfg and channel_cfg.get('admin_user_ids'):
+                ids = [u.strip() for u in channel_cfg['admin_user_ids'].split(',') if u.strip()]
+                return user_id in ids
+        except Exception:
+            pass
+        return self._is_admin(user_id)
+
     def _register_commands(self):
         @self.slack_app.command("/ticket-status")
         def handle_ticket_status(ack, body, say):
@@ -199,6 +213,18 @@ We've recorded the details and notified the relevant team. You can track progres
 🔍 Use the button below to view or update ticket information - including status, assignee, and priority.
 """
                     
+                    # Load channel-specific priorities if configured
+                    try:
+                        cfg_map = self.ticket_service.sheets_service.get_channel_config_map()
+                        cfg = cfg_map.get(channel_id, {})
+                        priorities_csv = cfg.get('priorities', '')
+                        if priorities_csv:
+                            priorities = [p.strip() for p in priorities_csv.split(',') if p.strip()]
+                        else:
+                            priorities = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+                    except Exception:
+                        priorities = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+
                     # Create buttons for ticket actions
                     blocks = [
                         {
@@ -305,7 +331,7 @@ We've recorded the details and notified the relevant team. You can track progres
                 user_id = body["user"]["id"]
                 
                 # Permission check: only admins can close
-                if not self._is_admin(user_id):
+                if not self._is_channel_admin(user_id, body.get("channel", {}).get("id")):
                     try:
                         say(
                             text="❌ Only admins can close tickets.",
@@ -382,7 +408,7 @@ We've recorded the details and notified the relevant team. You can track progres
                 logger.info(f"View & Edit button clicked for ticket {ticket_id} by user {user_id}")
                 
                 # Check if user has permission (admin only)
-                if not self._is_admin(user_id):
+                if not self._is_channel_admin(user_id, body["channel"]["id"]):
                     # Send error message
                     try:
                         client.chat_postEphemeral(
@@ -404,7 +430,18 @@ We've recorded the details and notified the relevant team. You can track progres
                     )
                     return
                 
-                # Create modal using views.open API
+                # Create modal using views.open API (with per-channel priorities if configured)
+                try:
+                    cfg_map = self.ticket_service.sheets_service.get_channel_config_map()
+                    cfg = cfg_map.get(body["channel"]["id"], {})
+                    priorities_csv = cfg.get('priorities', '')
+                    if priorities_csv:
+                        modal_priorities = [p.strip().upper() for p in priorities_csv.split(',') if p.strip()]
+                    else:
+                        modal_priorities = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+                except Exception:
+                    modal_priorities = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+
                 modal = {
                     "type": "modal",
                     "callback_id": "ticket_edit_modal",
@@ -527,33 +564,9 @@ We've recorded the details and notified the relevant team. You can track progres
                                 },
                                 "options": [
                                     {
-                                        "text": {
-                                            "type": "plain_text",
-                                            "text": "CRITICAL"
-                                        },
-                                        "value": "CRITICAL"
-                                    },
-                                    {
-                                        "text": {
-                                            "type": "plain_text",
-                                            "text": "HIGH"
-                                        },
-                                        "value": "HIGH"
-                                    },
-                                    {
-                                        "text": {
-                                            "type": "plain_text",
-                                            "text": "MEDIUM"
-                                        },
-                                        "value": "MEDIUM"
-                                    },
-                                    {
-                                        "text": {
-                                            "type": "plain_text",
-                                            "text": "LOW"
-                                        },
-                                        "value": "LOW"
-                                    }
+                                        "text": {"type": "plain_text", "text": p},
+                                        "value": p
+                                    } for p in modal_priorities
                                 ],
                                 "action_id": "priority_select"
                             }

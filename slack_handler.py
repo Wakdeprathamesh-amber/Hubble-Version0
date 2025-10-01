@@ -4,6 +4,7 @@ import logging
 from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
 from datetime import datetime
+from modal_builder import build_modal_blocks, extract_modal_values
 
 logger = logging.getLogger(__name__)
 
@@ -404,15 +405,15 @@ We've recorded the details and notified the relevant team. You can track progres
                 # Get ticket ID from button value
                 ticket_id = body["actions"][0]["value"]
                 user_id = body["user"]["id"]
+                channel_id = body["channel"]["id"]
                 
                 logger.info(f"View & Edit button clicked for ticket {ticket_id} by user {user_id}")
                 
                 # Check if user has permission (admin only)
-                if not self._is_channel_admin(user_id, body["channel"]["id"]):
-                    # Send error message
+                if not self._is_channel_admin(user_id, channel_id):
                     try:
                         client.chat_postEphemeral(
-                            channel=body["channel"]["id"],
+                            channel=channel_id,
                             user=user_id,
                             text="❌ Only admins can view or edit tickets."
                         )
@@ -424,24 +425,41 @@ We've recorded the details and notified the relevant team. You can track progres
                 ticket = self.ticket_service.get_ticket(ticket_id)
                 if not ticket:
                     client.chat_postEphemeral(
-                        channel=body["channel"]["id"],
+                        channel=channel_id,
                         user=user_id,
                         text=f"❌ Ticket #{ticket_id} not found."
                     )
                     return
                 
-                # Create modal using views.open API (with per-channel priorities if configured)
-                try:
-                    cfg_map = self.ticket_service.sheets_service.get_channel_config_map()
-                    cfg = cfg_map.get(body["channel"]["id"], {})
-                    priorities_csv = cfg.get('priorities', '')
-                    if priorities_csv:
-                        modal_priorities = [p.strip().upper() for p in priorities_csv.split(',') if p.strip()]
-                    else:
-                        modal_priorities = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
-                except Exception:
-                    modal_priorities = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
-
+                # Get modal template for this channel
+                cfg_map = self.ticket_service.sheets_service.get_channel_config_map()
+                cfg = cfg_map.get(ticket.get('channel_id', channel_id), {})
+                template_key = cfg.get('modal_template_key', 'tech_default')
+                
+                logger.info(f"Loading modal template: {template_key} for ticket {ticket_id}")
+                
+                # Load field definitions from Modal Templates sheet
+                fields = self.ticket_service.sheets_service.get_modal_template(template_key)
+                
+                if not fields:
+                    logger.error(f"No fields found for template '{template_key}'")
+                    client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text=f"❌ Modal template '{template_key}' not found. Please check Modal Templates sheet."
+                    )
+                    return
+                
+                # Build modal blocks dynamically
+                modal_blocks = build_modal_blocks(fields, ticket)
+                
+                # Store template_key and channel_id in metadata
+                metadata = json.dumps({
+                    'ticket_id': ticket_id,
+                    'template_key': template_key,
+                    'channel_id': ticket.get('channel_id', channel_id)
+                })
+                
                 modal = {
                     "type": "modal",
                     "callback_id": "ticket_edit_modal",
@@ -460,137 +478,11 @@ We've recorded the details and notified the relevant team. You can track progres
                         "text": "Cancel",
                         "emoji": True
                     },
-                    "blocks": [
-                        {
-                            "type": "input",
-                            "block_id": "requester",
-                            "label": {
-                                "type": "plain_text",
-                                "text": "Requester",
-                                "emoji": True
-                            },
-                            "element": {
-                                "type": "users_select",
-                                "placeholder": {
-                                    "type": "plain_text",
-                                    "text": "Select requester",
-                                    "emoji": True
-                                },
-                                "initial_user": ticket.get("created_by", ""),
-                                "action_id": "requester_select"
-                            }
-                        },
-                        {
-                            "type": "input",
-                            "block_id": "status",
-                            "label": {
-                                "type": "plain_text",
-                                "text": "Status",
-                                "emoji": True
-                            },
-                            "element": {
-                                "type": "static_select",
-                                "placeholder": {
-                                    "type": "plain_text",
-                                    "text": "Select status",
-                                    "emoji": True
-                                },
-                                "initial_option": {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": ticket.get("status", "Open")
-                                    },
-                                    "value": ticket.get("status", "Open")
-                                },
-                                "options": [
-                                    {
-                                        "text": {
-                                            "type": "plain_text",
-                                            "text": "Open"
-                                        },
-                                        "value": "Open"
-                                    },
-                                    {
-                                        "text": {
-                                            "type": "plain_text",
-                                            "text": "Closed"
-                                        },
-                                        "value": "Closed"
-                                    }
-                                ],
-                                "action_id": "status_select"
-                            }
-                        },
-                        {
-                            "type": "input",
-                            "block_id": "assignee",
-                            "label": {
-                                "type": "plain_text",
-                                "text": "Assignee",
-                                "emoji": True
-                            },
-                            "element": {
-                                "type": "users_select",
-                                "placeholder": {
-                                    "type": "plain_text",
-                                    "text": "Select assignee",
-                                    "emoji": True
-                                },
-                                "initial_user": ticket.get("assignee", ""),
-                                "action_id": "assignee_select"
-                            }
-                        },
-                        {
-                            "type": "input",
-                            "block_id": "priority",
-                            "label": {
-                                "type": "plain_text",
-                                "text": "Priority",
-                                "emoji": True
-                            },
-                            "element": {
-                                "type": "static_select",
-                                "placeholder": {
-                                    "type": "plain_text",
-                                    "text": "Select priority",
-                                    "emoji": True
-                                },
-                                "initial_option": {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": ticket.get("priority", "Medium")
-                                    },
-                                    "value": ticket.get("priority", "Medium")
-                                },
-                                "options": [
-                                    {
-                                        "text": {"type": "plain_text", "text": p},
-                                        "value": p
-                                    } for p in modal_priorities
-                                ],
-                                "action_id": "priority_select"
-                            }
-                        },
-                        {
-                            "type": "input",
-                            "block_id": "description",
-                            "label": {
-                                "type": "plain_text",
-                                "text": "Description",
-                                "emoji": True
-                            },
-                            "element": {
-                                "type": "plain_text_input",
-                                "multiline": True,
-                                "initial_value": ticket.get("message", ""),
-                                "action_id": "description_input"
-                            }
-                        }
-                    ],
-                    "private_metadata": ticket_id
+                    "blocks": modal_blocks,
+                    "private_metadata": metadata
                 }
                 
-                # Open the modal using views.open API
+                # Open the modal
                 try:
                     response = client.views_open(
                         trigger_id=body["trigger_id"],
@@ -598,44 +490,12 @@ We've recorded the details and notified the relevant team. You can track progres
                     )
                     
                     if response["ok"]:
-                        logger.info(f"Modal opened successfully for ticket {ticket_id}")
+                        logger.info(f"Dynamic modal opened successfully for ticket {ticket_id}")
                     else:
                         logger.error(f"Failed to open modal: {response.get('error')}")
-                        # Fallback to simple message
-                        update_message = f"""
-📋 *Ticket #{ticket_id} Details*
-
-**Current Status:** {ticket.get('status', 'Open')}
-**Priority:** {ticket.get('priority', 'Medium')}
-**Assignee:** {ticket.get('assignee', 'Not assigned')}
-**Description:** {ticket.get('message', 'No description')}
-
-*Modal functionality coming soon!*
-"""
-                        client.chat_postMessage(
-                            channel=body["channel"]["id"],
-                            thread_ts=body["message"]["thread_ts"],
-                            text=update_message
-                        )
                         
                 except Exception as e:
-                    logger.error(f"Error opening modal: {str(e)}")
-                    # Fallback to simple message
-                    update_message = f"""
-📋 *Ticket #{ticket_id} Details*
-
-**Current Status:** {ticket.get('status', 'Open')}
-**Priority:** {ticket.get('priority', 'Medium')}
-**Assignee:** {ticket.get('assignee', 'Not assigned')}
-**Description:** {ticket.get('message', 'No description')}
-
-*Modal functionality coming soon!*
-"""
-                    client.chat_postMessage(
-                        channel=body["channel"]["id"],
-                        thread_ts=body["message"]["thread_ts"],
-                        text=update_message
-                    )
+                    logger.error(f"Error opening modal: {str(e)}", exc_info=True)
                 
             except Exception as e:
                 logger.error(f"Error handling view edit ticket action: {str(e)}", exc_info=True)
@@ -654,25 +514,40 @@ We've recorded the details and notified the relevant team. You can track progres
             """Handle modal submission for ticket editing"""
             try:
                 logger.info("🔧 view_submission received for ticket_edit_modal")
-                # Permission check: only admins can submit modal
-                submitting_user_id = body["user"]["id"]
-                if not self._is_admin(submitting_user_id):
+                
+                # Parse metadata
+                try:
+                    metadata = json.loads(view["private_metadata"])
+                    ticket_id = metadata['ticket_id']
+                    template_key = metadata['template_key']
+                    channel_id = metadata['channel_id']
+                except Exception:
+                    # Fallback for old-style metadata (just ticket_id)
+                    ticket_id = view["private_metadata"]
+                    template_key = 'tech_default'
+                    channel_id = None
+                
+                user_id = body["user"]["id"]
+                
+                # Permission check: only channel admins can submit
+                if channel_id and not self._is_channel_admin(user_id, channel_id):
                     ack({
                         "response_action": "errors",
                         "errors": {
-                            "description": "Only admins can update tickets."
+                            "description": "Only channel admins can update tickets."
                         }
                     })
                     return
                 
-                # Acknowledge the modal submission immediately with success response
-                ack({
-                    "response_action": "clear"
-                })
+                # Acknowledge the modal submission immediately
+                ack({"response_action": "clear"})
                 
-                # Extract data from the modal
-                ticket_id = view["private_metadata"]
-                user_id = body["user"]["id"]
+                # Get template fields to know what to extract
+                fields = self.ticket_service.sheets_service.get_modal_template(template_key)
+                
+                # Extract submitted values
+                values = view["state"]["values"]
+                submitted_data = extract_modal_values(values, fields)
                 
                 # Parse the form data
                 values = view["state"]["values"]

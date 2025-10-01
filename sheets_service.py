@@ -268,6 +268,46 @@ class SheetsService:
             print(f"Error getting channel name from config: {str(e)}")
             return channel_id
 
+    def get_modal_template(self, template_key: str) -> List[Dict]:
+        """
+        Read modal field definitions from 'Modal Templates' sheet.
+        Expected columns:
+        A: Template Key | B: Field ID | C: Field Label | D: Field Type | E: Required | F: Options (CSV) | G: Order
+        
+        Args:
+            template_key (str): The template key to look up
+            
+        Returns:
+            List[Dict]: List of field definitions sorted by order
+        """
+        try:
+            result = self.sheet.values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range='Modal Templates!A2:G'
+            ).execute()
+
+            values = result.get('values', [])
+            fields = []
+            
+            for row in values:
+                row = row + [''] * (7 - len(row))  # Pad to 7 columns
+                if row[0].strip() == template_key:
+                    fields.append({
+                        'field_id': row[1].strip(),
+                        'field_label': row[2].strip(),
+                        'field_type': row[3].strip(),
+                        'required': row[4].strip().lower() == 'yes',
+                        'options': row[5].strip(),
+                        'order': int(row[6].strip()) if row[6].strip().isdigit() else 999
+                    })
+            
+            # Sort by order
+            fields.sort(key=lambda x: x['order'])
+            return fields
+        except Exception as e:
+            print(f"Error reading modal template '{template_key}': {str(e)}")
+            return []
+
     def get_tickets(self) -> List[Dict]:
         """
         Retrieve all tickets from the spreadsheet, handling duplicates by returning the most recent version.

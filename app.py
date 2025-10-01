@@ -5,6 +5,8 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from ticket_service import TicketService
 from slack_handler import SlackHandler
+from modal_builder import build_modal_blocks
+from modal_submission_handler import handle_dynamic_modal_submission
 import logging
 import threading
 
@@ -115,126 +117,10 @@ def slack_interactive():
                     logger.warning(f"Unknown action_id: {action_id}")
                     return jsonify({"error": "Unknown action"}), 400
         elif payload.get('type') == 'view_submission':
-            # Handle modal submission directly
-            logger.info(f"🔧 MODAL SUBMISSION: Handling directly")
-            logger.info(f"🔧 PAYLOAD TYPE: {payload.get('type')}")
-            logger.info(f"🔧 CALLBACK ID: {payload.get('view', {}).get('callback_id')}")
-            logger.info(f"🔧 FULL PAYLOAD KEYS: {list(payload.keys())}")
-            logger.info(f"🔧 VIEW KEYS: {list(payload.get('view', {}).keys())}")
-            logger.info(f"🔧 USER INFO: {payload.get('user', {})}")
-            logger.info(f"🔧 TEAM INFO: {payload.get('team', {})}")
-            
-            # Handle the modal submission directly
-            try:
-                view = payload.get('view', {})
-                callback_id = view.get('callback_id')
-                
-                if callback_id == 'ticket_edit_modal':
-                    # Extract data from the modal
-                    ticket_id = view.get('private_metadata')
-                    user_id = payload.get('user', {}).get('id')
-                    values = view.get('state', {}).get('values', {})
-                    
-                    # Parse form data
-                    requester_id = values.get('requester', {}).get('requester_select', {}).get('selected_user', '')
-                    status = values.get('status', {}).get('status_select', {}).get('selected_option', {}).get('value', '')
-                    assignee_id = values.get('assignee', {}).get('assignee_select', {}).get('selected_user', '')
-                    priority = values.get('priority', {}).get('priority_select', {}).get('selected_option', {}).get('value', '')
-                    description = values.get('description', {}).get('description_input', {}).get('value', '')
-                    
-                    logger.info(f"🔧 EXTRACTED VALUES: Ticket={ticket_id}, User={user_id}, Status={status}, Priority={priority}")
-                    logger.info(f"🔧 RAW FORM DATA: Requester={requester_id}, Assignee={assignee_id}")
-                    logger.info(f"🔧 VALUES STRUCTURE: {values}")
-                    
-                    # Return immediate acknowledgment first
-                    logger.info(f"🔧 RETURNING IMMEDIATE ACKNOWLEDGMENT")
-                    response_data = {
-                        "response_action": "clear"
-                    }
-                    response = jsonify(response_data)
-                    logger.info(f"🔧 IMMEDIATE RESPONSE: {response_data}")
-                    
-                    # Process the update in background
-                    def process_update():
-                        try:
-                            logger.info(f"🔧 BACKGROUND: Processing ticket {ticket_id} update")
-                            
-                            # Get user names from Slack
-                            requester_name = ""
-                            assignee_name = ""
-                            
-                            if requester_id:
-                                try:
-                                    logger.info(f"🔧 CALLING SLACK API for requester: {requester_id}")
-                                    user_info = slack_handler.slack_app.client.users_info(user=requester_id)
-                                    logger.info(f"🔧 SLACK API RESPONSE: {user_info}")
-                                    if user_info["ok"]:
-                                        user = user_info["user"]
-                                        real_name = user.get("real_name", user.get("name", f"@{requester_id}"))
-                                        requester_name = f"@{real_name}"  # Add @ symbol
-                                        logger.info(f"🔧 EXTRACTED NAME: {requester_name}")
-                                    else:
-                                        requester_name = f"@{requester_id}"
-                                        logger.error(f"❌ Slack API failed for requester: {user_info}")
-                                except Exception as e:
-                                    logger.error(f"❌ Error getting requester name: {str(e)}")
-                                    requester_name = f"@{requester_id}"
-                            
-                            if assignee_id:
-                                try:
-                                    logger.info(f"🔧 CALLING SLACK API for assignee: {assignee_id}")
-                                    user_info = slack_handler.slack_app.client.users_info(user=assignee_id)
-                                    logger.info(f"🔧 SLACK API RESPONSE: {user_info}")
-                                    if user_info["ok"]:
-                                        user = user_info["user"]
-                                        real_name = user.get("real_name", user.get("name", f"@{assignee_id}"))
-                                        assignee_name = f"@{real_name}"  # Add @ symbol
-                                        logger.info(f"🔧 EXTRACTED NAME: {assignee_name}")
-                                    else:
-                                        assignee_name = f"@{assignee_id}"
-                                        logger.error(f"❌ Slack API failed for assignee: {user_info}")
-                                except Exception as e:
-                                    logger.error(f"❌ Error getting assignee name: {str(e)}")
-                                    assignee_name = f"@{assignee_id}"
-                            
-                            logger.info(f"🔧 USER NAMES: Requester={requester_name}, Assignee={assignee_name}")
-                            logger.info(f"🔧 ORIGINAL IDs: Requester={requester_id}, Assignee={assignee_id}")
-                            logger.info(f"🔧 SLACK API RESPONSES: Requester={user_info if 'user_info' in locals() else 'Not called'}")
-                            
-                            success = slack_handler.ticket_service.update_ticket_from_modal(
-                                ticket_id=ticket_id,
-                                requester=requester_name,
-                                status=status,
-                                assignee=assignee_name,
-                                priority=priority,
-                                description=description
-                            )
-                            
-                            if success:
-                                logger.info(f"✅ BACKGROUND: Successfully updated ticket {ticket_id}")
-                            else:
-                                logger.error(f"❌ BACKGROUND: Failed to update ticket {ticket_id}")
-                        except Exception as e:
-                            logger.error(f"❌ BACKGROUND ERROR: {str(e)}")
-                    
-                    # Start background processing
-                    thread = threading.Thread(target=process_update)
-                    thread.daemon = True
-                    thread.start()
-                    
-                    return response, 200
-                else:
-                    logger.warning(f"Unknown callback_id: {callback_id}")
-                    return jsonify({"response_action": "clear"})
-                    
-            except Exception as e:
-                logger.error(f"❌ MODAL HANDLER ERROR: {str(e)}", exc_info=True)
-                return jsonify({
-                    "response_action": "errors",
-                    "errors": {
-                        "description": "An error occurred while updating the ticket."
-                    }
-                })
+            # Delegate to Slack Bolt handler which uses dynamic modal system
+            logger.info(f"🔧 MODAL SUBMISSION: Delegating to Slack Bolt handler")
+            # Let Slack Bolt handler process it
+            pass
         
         # Try Slack Bolt handler as fallback
         try:
@@ -249,7 +135,7 @@ def slack_interactive():
         return jsonify({"error": str(e)}), 500
 
 def handle_view_edit_ticket_direct(payload):
-    """Handle View & Edit button click"""
+    """Handle View & Edit button click with dynamic modal"""
     try:
         # Extract data from payload
         user_id = payload['user']['id']
@@ -258,7 +144,7 @@ def handle_view_edit_ticket_direct(payload):
         
         logger.info(f"🔧 Direct handling: View & Edit for ticket {ticket_id} by user {user_id} in channel {channel_id}")
 
-        # Admin enforcement using Config sheet per-channel admins
+        # Admin enforcement
         try:
             cfg_map = slack_handler.ticket_service.sheets_service.get_channel_config_map()
             cfg = cfg_map.get(channel_id, {})
@@ -266,7 +152,6 @@ def handle_view_edit_ticket_direct(payload):
             if admin_ids_csv:
                 admin_ids = [u.strip() for u in admin_ids_csv.split(',') if u.strip()]
             else:
-                # Fallback to global env
                 admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
         except Exception:
             admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
@@ -284,30 +169,32 @@ def handle_view_edit_ticket_direct(payload):
                 pass
             return jsonify({"ok": False, "error": "not_admin"})
         
-        # Get ticket data from sheet
-        tickets = slack_handler.ticket_service.get_all_tickets()
-        ticket = None
-        for t in tickets:
-            if str(t.get('ticket_id')) == str(ticket_id):
-                ticket = t
-                break
-        
+        # Get ticket data
+        ticket = slack_handler.ticket_service.get_ticket(ticket_id)
         if not ticket:
             logger.error(f"❌ Ticket {ticket_id} not found")
             return jsonify({"error": "Ticket not found"}), 404
         
-        # Get assignee user ID (default to creator if not set)
-        # For now, we'll use the current user as default since we don't have user IDs stored
-        assignee_user_id = user_id
+        # Get modal template for this channel
+        cfg_map = slack_handler.ticket_service.sheets_service.get_channel_config_map()
+        cfg = cfg_map.get(ticket.get('channel_id', channel_id), {})
+        template_key = cfg.get('modal_template_key', 'tech_default')
         
-        # Convert priority to modal format
-        priority_mapping = {
-            "Critical": "CRITICAL",
-            "High": "HIGH", 
-            "Medium": "MEDIUM",
-            "Low": "LOW"
-        }
-        modal_priority = priority_mapping.get(ticket.get('priority', 'Medium'), 'MEDIUM')
+        # Load field definitions
+        fields = slack_handler.ticket_service.sheets_service.get_modal_template(template_key)
+        if not fields:
+            logger.error(f"No fields found for template '{template_key}'")
+            return jsonify({"error": "Modal template not found"}), 500
+        
+        # Build dynamic modal blocks
+        modal_blocks = build_modal_blocks(fields, ticket)
+        
+        # Store metadata
+        metadata = json.dumps({
+            'ticket_id': ticket_id,
+            'template_key': template_key,
+            'channel_id': ticket.get('channel_id', channel_id)
+        })
         
         # Create modal payload
         modal_payload = {
@@ -330,169 +217,19 @@ def handle_view_edit_ticket_direct(payload):
                     "text": "Cancel",
                     "emoji": True
                 },
-                "blocks": [
-                    {
-                        "type": "input",
-                        "block_id": "requester",
-                        "label": {
-                            "type": "plain_text",
-                            "text": "Requester",
-                            "emoji": True
-                        },
-                        "element": {
-                            "type": "users_select",
-                            "placeholder": {
-                                "type": "plain_text",
-                                "text": "Select requester",
-                                "emoji": True
-                            },
-                            "initial_user": user_id,  # Use current user as default since we don't have stored user IDs
-                            "action_id": "requester_select"
-                        }
-                    },
-                    {
-                        "type": "input",
-                        "block_id": "status",
-                        "label": {
-                            "type": "plain_text",
-                            "text": "Status",
-                            "emoji": True
-                        },
-                        "element": {
-                            "type": "static_select",
-                            "placeholder": {
-                                "type": "plain_text",
-                                "text": "Select status",
-                                "emoji": True
-                            },
-                            "initial_option": {
-                                "text": {
-                                    "type": "plain_text",
-                                    "text": ticket.get("status", "Open")
-                                },
-                                "value": ticket.get("status", "Open")
-                            },
-                            "options": [
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "Open"
-                                    },
-                                    "value": "Open"
-                                },
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "Closed"
-                                    },
-                                    "value": "Closed"
-                                }
-                            ],
-                            "action_id": "status_select"
-                        }
-                    },
-                    {
-                        "type": "input",
-                        "block_id": "assignee",
-                        "label": {
-                            "type": "plain_text",
-                            "text": "Assignee",
-                            "emoji": True
-                        },
-                        "element": {
-                            "type": "users_select",
-                            "placeholder": {
-                                "type": "plain_text",
-                                "text": "Select assignee",
-                                "emoji": True
-                            },
-                            "initial_user": assignee_user_id,
-                            "action_id": "assignee_select"
-                        }
-                    },
-                    {
-                        "type": "input",
-                        "block_id": "priority",
-                        "label": {
-                            "type": "plain_text",
-                            "text": "Priority",
-                            "emoji": True
-                        },
-                        "element": {
-                            "type": "static_select",
-                            "placeholder": {
-                                "type": "plain_text",
-                                "text": "Select priority",
-                                "emoji": True
-                            },
-                            "initial_option": {
-                                "text": {
-                                    "type": "plain_text",
-                                    "text": modal_priority
-                                },
-                                "value": modal_priority
-                            },
-                            "options": [
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "CRITICAL"
-                                    },
-                                    "value": "CRITICAL"
-                                },
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "HIGH"
-                                    },
-                                    "value": "HIGH"
-                                },
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "MEDIUM"
-                                    },
-                                    "value": "MEDIUM"
-                                },
-                                {
-                                    "text": {
-                                        "type": "plain_text",
-                                        "text": "LOW"
-                                    },
-                                    "value": "LOW"
-                                }
-                            ],
-                            "action_id": "priority_select"
-                        }
-                    },
-                    {
-                        "type": "input",
-                        "block_id": "description",
-                        "label": {
-                            "type": "plain_text",
-                            "text": "Description",
-                            "emoji": True
-                        },
-                        "element": {
-                            "type": "plain_text_input",
-                            "multiline": True,
-                            "initial_value": ticket.get("description", ""),
-                            "action_id": "description_input"
-                        }
-                    }
-                ],
-                "private_metadata": str(ticket_id)
+                "blocks": modal_blocks,
+                "private_metadata": metadata
             }
         }
         
-        # Open modal using Slack API
+        # Open modal
         from slack_sdk import WebClient
         client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
         
         try:
             response = client.views_open(**modal_payload)
             if response['ok']:
-                logger.info(f"Modal opened successfully for ticket {ticket_id}")
+                logger.info(f"Dynamic modal opened successfully for ticket {ticket_id}")
                 return jsonify({"ok": True})
             else:
                 logger.error(f"Failed to open modal: {response}")

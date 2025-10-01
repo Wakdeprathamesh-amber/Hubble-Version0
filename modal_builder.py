@@ -47,9 +47,10 @@ def build_modal_blocks(fields: List[Dict], ticket_data: Optional[Dict] = None) -
                     "emoji": True
                 }
             }
-            # Pre-fill if data exists
-            if ticket_data.get(field_id):
-                element["initial_user"] = ticket_data[field_id]
+            # Pre-fill if data exists and looks like a user ID (starts with U)
+            initial_val = ticket_data.get(field_id) or ticket_data.get(f"{field_id}_id", "")
+            if initial_val and initial_val.startswith('U'):
+                element["initial_user"] = initial_val
                 
         elif field_type == "select":
             # Build options from CSV

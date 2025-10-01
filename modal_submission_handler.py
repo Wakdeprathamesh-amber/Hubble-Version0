@@ -91,6 +91,12 @@ def handle_dynamic_modal_submission(ack, body, view, slack_handler):
         priority = core_data.get('priority', 'MEDIUM')
         description = core_data.get('description', '')
         
+        # Store user IDs in custom_data for future reference (helps with modal pre-fill)
+        if requester_id:
+            custom_data['requester_id'] = requester_id
+        if assignee_id:
+            custom_data['assignee_id'] = assignee_id
+        
         logger.info(f"🔧 Core: Requester={requester}, Status={status}, Assignee={assignee}, Priority={priority}")
         logger.info(f"🔧 Custom: {custom_data}")
         

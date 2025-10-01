@@ -193,7 +193,7 @@ class TicketService:
             logger.error(f"Error updating ticket first response: {str(e)}")
             return False
 
-    def update_ticket_from_modal(self, ticket_id, requester, status, assignee, priority, description):
+    def update_ticket_from_modal(self, ticket_id, requester, status, assignee, priority, description, custom_fields=None):
         """Update ticket from modal form data"""
         try:
             ticket = self.get_ticket(ticket_id)
@@ -208,7 +208,8 @@ class TicketService:
                 status=status,
                 assignee=assignee,
                 priority=priority,
-                description=description
+                description=description,
+                custom_fields=custom_fields
             )
             
             if success:

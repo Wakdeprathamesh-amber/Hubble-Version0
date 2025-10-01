@@ -89,7 +89,7 @@ class SheetsService:
             values = result.get('values', [])
             
             # If no headers exist or they're not correct, set them up
-            if not values or len(values[0]) != 12:
+            if not values or len(values[0]) != 13:
                 headers = [
                     'Ticket ID',
                     'Thread Link',
@@ -102,7 +102,8 @@ class SheetsService:
                     'Resolved At',
                     'Message',
                     'Channel ID',
-                    'Channel Name'
+                    'Channel Name',
+                    'Custom Fields (JSON)'
                 ]
                 
                 body = {
@@ -112,12 +113,12 @@ class SheetsService:
                 # Clear existing content and set new headers
                 self.sheet.values().clear(
                     spreadsheetId=self.spreadsheet_id,
-                    range=f'{self.sheet_name}!A1:L'
+                    range=f'{self.sheet_name}!A1:M'
                 ).execute()
                 
                 self.sheet.values().update(
                     spreadsheetId=self.spreadsheet_id,
-                    range=f'{self.sheet_name}!A1:L1',
+                    range=f'{self.sheet_name}!A1:M1',
                     valueInputOption='RAW',
                     body=body
                 ).execute()
@@ -159,6 +160,11 @@ class SheetsService:
         # Get channel name from Config or fallback to channel_id
         channel_name = self._get_channel_name(channel_id)
         
+        # Get custom fields as JSON
+        import json
+        custom_fields = ticket_data.get('custom_fields', {})
+        custom_fields_json = json.dumps(custom_fields) if custom_fields else ''
+        
         row = [
             ticket_data.get('ticket_id', ''),           # Ticket ID
             thread_link,                                 # Thread Link
@@ -171,7 +177,8 @@ class SheetsService:
             '',                                         # Resolved At (empty initially)
             ticket_data.get('description', ''),         # Message
             ticket_data.get('channel_id', ''),          # Channel ID
-            channel_name                                # Channel Name
+            channel_name,                               # Channel Name
+            custom_fields_json                          # Custom Fields (JSON)
         ]
 
         body = {
@@ -182,7 +189,7 @@ class SheetsService:
             # Append the row to the sheet
             self.sheet.values().append(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A:L',
+                range=f'{self.sheet_name}!A:M',
                 valueInputOption='RAW',
                 insertDataOption='INSERT_ROWS',
                 body=body
@@ -318,7 +325,7 @@ class SheetsService:
         try:
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A2:L'  # Skip header row, include channel_name column
+                range=f'{self.sheet_name}!A2:M'  # Skip header row, include custom fields column
             ).execute()
 
             values = result.get('values', [])
@@ -326,10 +333,20 @@ class SheetsService:
 
             for row in values:
                 # Ensure row has all required fields, pad with empty strings if needed
-                row = row + [''] * (12 - len(row))  # Pad row to have 12 columns
+                row = row + [''] * (13 - len(row))  # Pad row to have 13 columns
                 
                 if row[0]:  # Only process rows that have a ticket ID
                     ticket_id = row[0].strip()
+                    
+                    # Parse custom fields JSON
+                    import json
+                    custom_fields = {}
+                    if row[12]:  # Column M: Custom Fields
+                        try:
+                            custom_fields = json.loads(row[12])
+                        except Exception:
+                            custom_fields = {}
+                    
                     ticket = {
                         'ticket_id': ticket_id,
                         'thread_link': row[1],
@@ -342,7 +359,8 @@ class SheetsService:
                         'resolved_at': row[8],
                         'message': row[9],
                         'channel_id': row[10],     # Channel ID
-                        'channel_name': row[11]    # Channel Name
+                        'channel_name': row[11],   # Channel Name
+                        **custom_fields  # Merge custom fields into ticket dict
                     }
                     # Keep the most recent version (last occurrence)
                     ticket_dict[ticket_id] = ticket
@@ -743,7 +761,7 @@ class SheetsService:
             print(f"❌ Error clearing sheet data: {str(e)}")
             return False 
 
-    def update_ticket_from_modal(self, ticket_id: str, requester: str, status: str, assignee: str, priority: str, description: str) -> bool:
+    def update_ticket_from_modal(self, ticket_id: str, requester: str, status: str, assignee: str, priority: str, description: str, custom_fields: Dict = None) -> bool:
         """
         Update ticket data from modal form.
         
@@ -850,7 +868,17 @@ class SheetsService:
                 body={"values": [[description]]}
             ).execute()
             
-
+            # Column M: Custom Fields (JSON)
+            if custom_fields is not None:
+                import json
+                custom_fields_json = json.dumps(custom_fields) if custom_fields else ''
+                self.sheet.values().update(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f"{self.sheet_name}!M{row_index}",
+                    valueInputOption="RAW",
+                    body={"values": [[custom_fields_json]]}
+                ).execute()
+                print(f"✅ Updated custom fields for ticket {ticket_id}")
 
             print(f"✅ Successfully updated ticket {ticket_id} at row {row_index}")
             return True

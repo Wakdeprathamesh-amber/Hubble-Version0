@@ -191,8 +191,8 @@ class SheetsService:
     def get_channel_config_map(self) -> Dict[str, Dict[str, str]]:
         """
         Read per-channel configuration from a 'Config' sheet tab.
-        Expected headers (row 1):
-        Channel ID | Admin User IDs (CSV) | Default Assignee | Priorities (CSV) | Modal Template Key
+        Expected columns:
+        A: Channel ID | B: Channel Name (optional) | C: Admin User IDs | D: Default Assignee | E: Priorities | F: Modal Template Key
 
         Returns:
             Dict[channel_id, settings_dict]
@@ -201,21 +201,21 @@ class SheetsService:
             # Try to read the Config tab; if missing, return empty
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range='Config!A2:E'
+                range='Config!A2:F'
             ).execute()
 
             values = result.get('values', [])
             config_map: Dict[str, Dict[str, str]] = {}
             for row in values:
-                row = row + [''] * (5 - len(row))
+                row = row + [''] * (6 - len(row))  # Pad to 6 columns
                 channel_id = row[0].strip()
                 if not channel_id:
                     continue
                 config_map[channel_id] = {
-                    'admin_user_ids': row[1].strip(),
-                    'default_assignee': row[2].strip(),
-                    'priorities': row[3].strip(),
-                    'modal_template_key': row[4].strip(),
+                    'admin_user_ids': row[2].strip(),      # Column C
+                    'default_assignee': row[3].strip(),    # Column D
+                    'priorities': row[4].strip(),          # Column E
+                    'modal_template_key': row[5].strip(),  # Column F
                 }
             return config_map
         except Exception as e:

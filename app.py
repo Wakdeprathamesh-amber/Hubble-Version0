@@ -254,19 +254,31 @@ def handle_view_edit_ticket_direct(payload):
         # Extract data from payload
         user_id = payload['user']['id']
         ticket_id = payload['actions'][0]['value']
+        channel_id = payload['channel']['id']
         
-        logger.info(f"🔧 Direct handling: View & Edit for ticket {ticket_id} by user {user_id}")
+        logger.info(f"🔧 Direct handling: View & Edit for ticket {ticket_id} by user {user_id} in channel {channel_id}")
 
-        # Admin enforcement using env ADMIN_USER_IDS
-        admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
+        # Admin enforcement using Config sheet per-channel admins
+        try:
+            cfg_map = slack_handler.ticket_service.sheets_service.get_channel_config_map()
+            cfg = cfg_map.get(channel_id, {})
+            admin_ids_csv = cfg.get('admin_user_ids', '')
+            if admin_ids_csv:
+                admin_ids = [u.strip() for u in admin_ids_csv.split(',') if u.strip()]
+            else:
+                # Fallback to global env
+                admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
+        except Exception:
+            admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
+        
         if user_id not in admin_ids:
             from slack_sdk import WebClient
             client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
             try:
                 client.chat_postEphemeral(
-                    channel=payload['channel']['id'],
+                    channel=channel_id,
                     user=user_id,
-                    text="❌ Only admins can view or edit tickets."
+                    text="❌ Only channel admins can view or edit tickets."
                 )
             except Exception:
                 pass
@@ -502,10 +514,21 @@ def handle_close_ticket_direct(payload):
         ticket_id = payload['actions'][0]['value']
         thread_ts = payload['message']['thread_ts']
         
-        logger.info(f"Direct handling: Close ticket {ticket_id} by user {user_id}")
+        logger.info(f"Direct handling: Close ticket {ticket_id} by user {user_id} in channel {channel_id}")
 
-        # Admin enforcement using env ADMIN_USER_IDS
-        admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
+        # Admin enforcement using Config sheet per-channel admins
+        try:
+            cfg_map = slack_handler.ticket_service.sheets_service.get_channel_config_map()
+            cfg = cfg_map.get(channel_id, {})
+            admin_ids_csv = cfg.get('admin_user_ids', '')
+            if admin_ids_csv:
+                admin_ids = [u.strip() for u in admin_ids_csv.split(',') if u.strip()]
+            else:
+                # Fallback to global env
+                admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
+        except Exception:
+            admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
+        
         if user_id not in admin_ids:
             from slack_sdk import WebClient
             client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
@@ -513,7 +536,7 @@ def handle_close_ticket_direct(payload):
                 client.chat_postEphemeral(
                     channel=channel_id,
                     user=user_id,
-                    text="❌ Only admins can close tickets."
+                    text="❌ Only channel admins can close tickets."
                 )
             except Exception:
                 pass

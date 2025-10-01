@@ -224,7 +224,7 @@ class SheetsService:
 
     def _get_default_assignee(self, channel_id: str) -> str:
         """
-        Get the default assignee based on the channel ID.
+        Get the default assignee based on the channel ID from Config sheet.
         
         Args:
             channel_id (str): The Slack channel ID
@@ -232,14 +232,17 @@ class SheetsService:
         Returns:
             str: The default assignee for the channel
         """
-        # Map channel IDs to default assignees
-        channel_assignees = {
-            'C08VB634J86': '@Prathamesh Wakde',  # Replace with actual channel ID and assignee
-            # Add more channel mappings as needed
-            # 'CHANNEL_ID': '@ASSIGNEE_NAME',
-        }
-        
-        return channel_assignees.get(channel_id, '')
+        try:
+            cfg_map = self.get_channel_config_map()
+            cfg = cfg_map.get(channel_id, {})
+            assignee = cfg.get('default_assignee', '').strip()
+            # Ensure @ prefix
+            if assignee and not assignee.startswith('@'):
+                assignee = f'@{assignee}'
+            return assignee
+        except Exception as e:
+            print(f"Error getting default assignee from config: {str(e)}")
+            return ''
 
     def get_tickets(self) -> List[Dict]:
         """

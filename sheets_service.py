@@ -83,13 +83,13 @@ class SheetsService:
             # Get current headers
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A1:K1'
+                range=f'{self.sheet_name}!A1:L1'
             ).execute()
             
             values = result.get('values', [])
             
             # If no headers exist or they're not correct, set them up
-            if not values or len(values[0]) != 11:
+            if not values or len(values[0]) != 12:
                 headers = [
                     'Ticket ID',
                     'Thread Link',
@@ -101,7 +101,8 @@ class SheetsService:
                     'First Response Time',
                     'Resolved At',
                     'Message',
-                    'Channel ID'
+                    'Channel ID',
+                    'Channel Name'
                 ]
                 
                 body = {
@@ -111,12 +112,12 @@ class SheetsService:
                 # Clear existing content and set new headers
                 self.sheet.values().clear(
                     spreadsheetId=self.spreadsheet_id,
-                    range=f'{self.sheet_name}!A1:K'
+                    range=f'{self.sheet_name}!A1:L'
                 ).execute()
                 
                 self.sheet.values().update(
                     spreadsheetId=self.spreadsheet_id,
-                    range=f'{self.sheet_name}!A1:K1',
+                    range=f'{self.sheet_name}!A1:L1',
                     valueInputOption='RAW',
                     body=body
                 ).execute()
@@ -155,6 +156,9 @@ class SheetsService:
         # Get default assignee based on channel
         default_assignee = self._get_default_assignee(channel_id)
         
+        # Get channel name from Config or fallback to channel_id
+        channel_name = self._get_channel_name(channel_id)
+        
         row = [
             ticket_data.get('ticket_id', ''),           # Ticket ID
             thread_link,                                 # Thread Link
@@ -166,7 +170,8 @@ class SheetsService:
             '',                                         # First Response Time (empty initially)
             '',                                         # Resolved At (empty initially)
             ticket_data.get('description', ''),         # Message
-            ticket_data.get('channel_id', '')           # Channel ID
+            ticket_data.get('channel_id', ''),          # Channel ID
+            channel_name                                # Channel Name
         ]
 
         body = {
@@ -177,7 +182,7 @@ class SheetsService:
             # Append the row to the sheet
             self.sheet.values().append(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A:K',
+                range=f'{self.sheet_name}!A:L',
                 valueInputOption='RAW',
                 insertDataOption='INSERT_ROWS',
                 body=body
@@ -192,7 +197,7 @@ class SheetsService:
         """
         Read per-channel configuration from a 'Config' sheet tab.
         Expected columns:
-        A: Channel ID | B: Channel Name (optional) | C: Admin User IDs | D: Default Assignee | E: Priorities | F: Modal Template Key
+        A: Channel ID | B: Channel Name | C: Admin User IDs | D: Default Assignee | E: Priorities | F: Modal Template Key
 
         Returns:
             Dict[channel_id, settings_dict]
@@ -212,6 +217,7 @@ class SheetsService:
                 if not channel_id:
                     continue
                 config_map[channel_id] = {
+                    'channel_name': row[1].strip(),        # Column B
                     'admin_user_ids': row[2].strip(),      # Column C
                     'default_assignee': row[3].strip(),    # Column D
                     'priorities': row[4].strip(),          # Column E
@@ -244,6 +250,24 @@ class SheetsService:
             print(f"Error getting default assignee from config: {str(e)}")
             return ''
 
+    def _get_channel_name(self, channel_id: str) -> str:
+        """
+        Get the channel name from Config sheet.
+        
+        Args:
+            channel_id (str): The Slack channel ID
+            
+        Returns:
+            str: The channel name or channel_id if not found
+        """
+        try:
+            cfg_map = self.get_channel_config_map()
+            cfg = cfg_map.get(channel_id, {})
+            return cfg.get('channel_name', channel_id)
+        except Exception as e:
+            print(f"Error getting channel name from config: {str(e)}")
+            return channel_id
+
     def get_tickets(self) -> List[Dict]:
         """
         Retrieve all tickets from the spreadsheet, handling duplicates by returning the most recent version.
@@ -254,7 +278,7 @@ class SheetsService:
         try:
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A2:K'  # Skip header row, include new channel column
+                range=f'{self.sheet_name}!A2:L'  # Skip header row, include channel_name column
             ).execute()
 
             values = result.get('values', [])
@@ -262,7 +286,7 @@ class SheetsService:
 
             for row in values:
                 # Ensure row has all required fields, pad with empty strings if needed
-                row = row + [''] * (11 - len(row))  # Pad row to have 11 columns
+                row = row + [''] * (12 - len(row))  # Pad row to have 12 columns
                 
                 if row[0]:  # Only process rows that have a ticket ID
                     ticket_id = row[0].strip()
@@ -277,7 +301,8 @@ class SheetsService:
                         'first_response': row[7],
                         'resolved_at': row[8],
                         'message': row[9],
-                        'channel_id': row[10]  # New channel ID column
+                        'channel_id': row[10],     # Channel ID
+                        'channel_name': row[11]    # Channel Name
                     }
                     # Keep the most recent version (last occurrence)
                     ticket_dict[ticket_id] = ticket

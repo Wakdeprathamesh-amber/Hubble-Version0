@@ -83,13 +83,70 @@ class SheetsService:
             # Get current headers
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A1:L1'
+                range=f'{self.sheet_name}!A1:M1'
             ).execute()
             
             values = result.get('values', [])
             
-            # If no headers exist or they're not correct, set them up
-            if not values or len(values[0]) != 13:
+            # Only setup headers if the sheet is COMPLETELY EMPTY (no first column at all)
+            # Check if first cell is empty or doesn't say "Ticket ID"
+            should_setup = False
+            
+            if not values:
+                # Sheet is completely empty
+                should_setup = True
+                print("⚠️ Sheet has no headers. Setting up new headers...")
+            elif not values[0] or len(values[0]) == 0:
+                # First row exists but is empty
+                should_setup = True
+                print("⚠️ Sheet header row is empty. Setting up new headers...")
+            elif values[0][0].strip() != 'Ticket ID':
+                # First column doesn't say "Ticket ID"
+                print("⚠️ WARNING: First column is not 'Ticket ID', but preserving existing data")
+                should_setup = False
+            else:
+                # Headers exist and first column is correct
+                print(f"✅ Headers found: {len(values[0])} columns")
+                
+                # If we have fewer than 13 columns, ADD missing columns without clearing data
+                if len(values[0]) < 13:
+                    print(f"⚠️ Adding missing header columns (found {len(values[0])}, need 13)")
+                    
+                    expected_headers = [
+                        'Ticket ID',
+                        'Thread Link',
+                        'Requester',
+                        'Status',
+                        'Priority',
+                        'Assignee',
+                        'Thread Created At TS',
+                        'First Response Time',
+                        'Resolved At',
+                        'Message',
+                        'Channel ID',
+                        'Channel Name',
+                        'Custom Fields (JSON)'
+                    ]
+                    
+                    # Extend existing headers with missing ones
+                    current_headers = values[0]
+                    missing_headers = expected_headers[len(current_headers):]
+                    updated_headers = current_headers + missing_headers
+                    
+                    body = {'values': [updated_headers]}
+                    
+                    # Update ONLY the header row, don't touch data
+                    self.sheet.values().update(
+                        spreadsheetId=self.spreadsheet_id,
+                        range=f'{self.sheet_name}!A1:M1',
+                        valueInputOption='RAW',
+                        body=body
+                    ).execute()
+                    print(f"✅ Added {len(missing_headers)} missing header columns")
+                
+                should_setup = False
+            
+            if should_setup:
                 headers = [
                     'Ticket ID',
                     'Thread Link',
@@ -110,12 +167,7 @@ class SheetsService:
                     'values': [headers]
                 }
                 
-                # Clear existing content and set new headers
-                self.sheet.values().clear(
-                    spreadsheetId=self.spreadsheet_id,
-                    range=f'{self.sheet_name}!A1:M'
-                ).execute()
-                
+                # Only clear the HEADER ROW, not all data
                 self.sheet.values().update(
                     spreadsheetId=self.spreadsheet_id,
                     range=f'{self.sheet_name}!A1:M1',
@@ -123,10 +175,11 @@ class SheetsService:
                     body=body
                 ).execute()
                 
-                print("Headers set up successfully")
+                print("✅ Headers set up successfully")
         except Exception as e:
-            print(f"Error setting up headers: {str(e)}")
-            raise
+            print(f"❌ Error setting up headers: {str(e)}")
+            # Don't raise - allow app to continue even if header setup fails
+            pass
 
     def append_ticket(self, ticket_data: Dict) -> bool:
         """

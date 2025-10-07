@@ -6,6 +6,7 @@ from slack_bolt.adapter.flask import SlackRequestHandler
 from datetime import datetime
 from modal_builder import build_modal_blocks, extract_modal_values
 from modal_submission_handler import handle_dynamic_modal_submission
+from internal_channel_handler import post_to_internal_channel, update_internal_channel_message
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +272,44 @@ We've recorded the details and notified the relevant team. You can track progres
                     )
                     
                     logger.info(f"✅ Ticket #{ticket_id} created successfully in channel {channel_id}")
+                    
+                    # Post to internal channel if configured
+                    try:
+                        cfg_map = self.ticket_service.sheets_service.get_channel_config_map()
+                        cfg = cfg_map.get(channel_id, {})
+                        internal_channel_id = cfg.get('internal_channel_id', '').strip()
+                        
+                        if internal_channel_id:
+                            logger.info(f"📊 Posting ticket #{ticket_id} to internal channel {internal_channel_id}")
+                            
+                            # Get the ticket data
+                            ticket = self.ticket_service.get_ticket(ticket_id)
+                            if ticket:
+                                # Get modal template fields
+                                template_key = cfg.get('modal_template_key', 'tech_default')
+                                fields = self.ticket_service.sheets_service.get_modal_template(template_key)
+                                
+                                # Post to internal channel
+                                internal_message_ts = post_to_internal_channel(
+                                    client=self.slack_app.client,
+                                    internal_channel_id=internal_channel_id,
+                                    ticket=ticket,
+                                    fields=fields or []
+                                )
+                                
+                                if internal_message_ts:
+                                    # Store the internal message timestamp
+                                    self.ticket_service.sheets_service.update_internal_message_ts(
+                                        ticket_id=ticket_id,
+                                        internal_message_ts=internal_message_ts
+                                    )
+                                    logger.info(f"✅ Posted ticket #{ticket_id} to internal channel")
+                                else:
+                                    logger.warning(f"⚠️ Failed to post ticket #{ticket_id} to internal channel")
+                        else:
+                            logger.debug(f"No internal channel configured for channel {channel_id}")
+                    except Exception as e:
+                        logger.error(f"❌ Error posting to internal channel: {str(e)}", exc_info=True)
                 
                 # Handle thread replies (update first response)
                 elif thread_ts:
@@ -514,6 +553,215 @@ We've recorded the details and notified the relevant team. You can track progres
         def handle_modal_submission_wrapper(ack, body, view, logger):
             """Handle modal submission for ticket editing - delegates to dynamic handler"""
             handle_dynamic_modal_submission(ack, body, view, self)
+        
+        # ========== INTERNAL CHANNEL BUTTON HANDLERS ==========
+        
+        @self.slack_app.action("internal_view_edit")
+        def handle_internal_view_edit(ack, body, client):
+            """Handle View/Edit button from internal channel"""
+            try:
+                ack()
+                
+                ticket_id = body["actions"][0]["value"]
+                user_id = body["user"]["id"]
+                channel_id = body["channel"]["id"]  # This is the internal channel
+                
+                logger.info(f"📊 Internal channel: View/Edit for ticket {ticket_id}")
+                
+                # Get ticket data
+                ticket = self.ticket_service.get_ticket(ticket_id)
+                if not ticket:
+                    client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text=f"❌ Ticket #{ticket_id} not found."
+                    )
+                    return
+                
+                # Get modal template
+                original_channel_id = ticket.get('channel_id', '')
+                cfg_map = self.ticket_service.sheets_service.get_channel_config_map()
+                cfg = cfg_map.get(original_channel_id, {})
+                template_key = cfg.get('modal_template_key', 'tech_default')
+                
+                fields = self.ticket_service.sheets_service.get_modal_template(template_key)
+                if not fields:
+                    client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text=f"❌ Modal template not found."
+                    )
+                    return
+                
+                # Build modal
+                modal_blocks = build_modal_blocks(fields, ticket)
+                metadata = json.dumps({
+                    'ticket_id': ticket_id,
+                    'template_key': template_key,
+                    'channel_id': original_channel_id
+                })
+                
+                modal = {
+                    "type": "modal",
+                    "callback_id": "ticket_edit_modal",
+                    "title": {
+                        "type": "plain_text",
+                        "text": f"Edit Ticket #{ticket_id}",
+                        "emoji": True
+                    },
+                    "submit": {
+                        "type": "plain_text",
+                        "text": "Update",
+                        "emoji": True
+                    },
+                    "close": {
+                        "type": "plain_text",
+                        "text": "Cancel",
+                        "emoji": True
+                    },
+                    "blocks": modal_blocks,
+                    "private_metadata": metadata
+                }
+                
+                client.views_open(trigger_id=body["trigger_id"], view=modal)
+                logger.info(f"✅ Opened edit modal from internal channel")
+                
+            except Exception as e:
+                logger.error(f"❌ Error handling internal view/edit: {str(e)}", exc_info=True)
+        
+        @self.slack_app.action("internal_assign_me")
+        def handle_internal_assign_me(ack, body, client):
+            """Handle Assign to Me button from internal channel"""
+            try:
+                ack()
+                
+                ticket_id = body["actions"][0]["value"]
+                user_id = body["user"]["id"]
+                channel_id = body["channel"]["id"]
+                
+                logger.info(f"📊 Internal channel: Assign to Me for ticket {ticket_id}")
+                
+                # Get user's name
+                user_name = self._get_user_name(client, user_id)
+                assignee_display = f"@{user_name}"
+                
+                # Update ticket assignee
+                success = self.ticket_service.sheets_service.update_ticket_assignee(
+                    ticket_id=ticket_id,
+                    assignee_id=assignee_display
+                )
+                
+                if success:
+                    # Get updated ticket
+                    ticket = self.ticket_service.get_ticket(ticket_id)
+                    if ticket:
+                        # Update internal channel message
+                        internal_message_ts = ticket.get('internal_message_ts', '').strip()
+                        original_channel_id = ticket.get('channel_id', '')
+                        
+                        cfg_map = self.ticket_service.sheets_service.get_channel_config_map()
+                        cfg = cfg_map.get(original_channel_id, {})
+                        template_key = cfg.get('modal_template_key', 'tech_default')
+                        fields = self.ticket_service.sheets_service.get_modal_template(template_key)
+                        
+                        if internal_message_ts:
+                            update_internal_channel_message(
+                                client=client,
+                                internal_channel_id=channel_id,
+                                message_ts=internal_message_ts,
+                                ticket=ticket,
+                                fields=fields or []
+                            )
+                        
+                        # Also post to original thread
+                        thread_link = ticket.get("thread_link", "")
+                        if thread_link and "/p" in thread_link:
+                            timestamp_part = thread_link.split("/p")[-1]
+                            if len(timestamp_part) >= 10:
+                                thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
+                                try:
+                                    client.chat_postMessage(
+                                        channel=original_channel_id,
+                                        thread_ts=thread_ts,
+                                        text=f"👤 Ticket #{ticket_id} assigned to <@{user_id}> ({user_name})"
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Error posting to thread: {str(e)}")
+                    
+                    logger.info(f"✅ Assigned ticket {ticket_id} to {user_name}")
+                else:
+                    logger.error(f"❌ Failed to assign ticket {ticket_id}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error handling internal assign me: {str(e)}", exc_info=True)
+        
+        @self.slack_app.action("internal_change_status")
+        def handle_internal_change_status(ack, body, client):
+            """Handle Change Status button from internal channel"""
+            try:
+                ack()
+                
+                ticket_id = body["actions"][0]["value"]
+                user_id = body["user"]["id"]
+                channel_id = body["channel"]["id"]
+                
+                logger.info(f"📊 Internal channel: Change Status for ticket {ticket_id}")
+                
+                # Get current ticket
+                ticket = self.ticket_service.get_ticket(ticket_id)
+                if not ticket:
+                    return
+                
+                current_status = ticket.get('status', 'Open')
+                new_status = "Closed" if current_status == "Open" else "Open"
+                
+                # Update status
+                success = self.ticket_service.update_ticket_status(ticket_id, new_status)
+                
+                if success:
+                    # Get updated ticket
+                    updated_ticket = self.ticket_service.get_ticket(ticket_id)
+                    if updated_ticket:
+                        # Update internal channel message
+                        internal_message_ts = updated_ticket.get('internal_message_ts', '').strip()
+                        original_channel_id = updated_ticket.get('channel_id', '')
+                        
+                        cfg_map = self.ticket_service.sheets_service.get_channel_config_map()
+                        cfg = cfg_map.get(original_channel_id, {})
+                        template_key = cfg.get('modal_template_key', 'tech_default')
+                        fields = self.ticket_service.sheets_service.get_modal_template(template_key)
+                        
+                        if internal_message_ts:
+                            update_internal_channel_message(
+                                client=client,
+                                internal_channel_id=channel_id,
+                                message_ts=internal_message_ts,
+                                ticket=updated_ticket,
+                                fields=fields or []
+                            )
+                        
+                        # Also post to original thread
+                        thread_link = updated_ticket.get("thread_link", "")
+                        if thread_link and "/p" in thread_link:
+                            timestamp_part = thread_link.split("/p")[-1]
+                            if len(timestamp_part) >= 10:
+                                thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
+                                try:
+                                    status_emoji = "✅" if new_status == "Closed" else "🔵"
+                                    client.chat_postMessage(
+                                        channel=original_channel_id,
+                                        thread_ts=thread_ts,
+                                        text=f"{status_emoji} Ticket #{ticket_id} status changed to *{new_status}* by <@{user_id}>"
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Error posting to thread: {str(e)}")
+                    
+                    logger.info(f"✅ Changed ticket {ticket_id} status to {new_status}")
+                else:
+                    logger.error(f"❌ Failed to change status for ticket {ticket_id}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error handling internal change status: {str(e)}", exc_info=True)
 
     def _has_edit_permission(self, user_id: str, channel_id: str) -> bool:
         """

@@ -108,9 +108,9 @@ class SheetsService:
                 # Headers exist and first column is correct
                 print(f"✅ Headers found: {len(values[0])} columns")
                 
-                # If we have fewer than 13 columns, ADD missing columns without clearing data
-                if len(values[0]) < 13:
-                    print(f"⚠️ Adding missing header columns (found {len(values[0])}, need 13)")
+                # If we have fewer than 14 columns, ADD missing columns without clearing data
+                if len(values[0]) < 14:
+                    print(f"⚠️ Adding missing header columns (found {len(values[0])}, need 14)")
                     
                     expected_headers = [
                         'Ticket ID',
@@ -125,7 +125,8 @@ class SheetsService:
                         'Message',
                         'Channel ID',
                         'Channel Name',
-                        'Custom Fields (JSON)'
+                        'Custom Fields (JSON)',
+                        'Internal Message TS'
                     ]
                     
                     # Extend existing headers with missing ones
@@ -138,7 +139,7 @@ class SheetsService:
                     # Update ONLY the header row, don't touch data
                     self.sheet.values().update(
                         spreadsheetId=self.spreadsheet_id,
-                        range=f'{self.sheet_name}!A1:M1',
+                        range=f'{self.sheet_name}!A1:N1',
                         valueInputOption='RAW',
                         body=body
                     ).execute()
@@ -160,7 +161,8 @@ class SheetsService:
                     'Message',
                     'Channel ID',
                     'Channel Name',
-                    'Custom Fields (JSON)'
+                    'Custom Fields (JSON)',
+                    'Internal Message TS'
                 ]
                 
                 body = {
@@ -170,7 +172,7 @@ class SheetsService:
                 # Only clear the HEADER ROW, not all data
                 self.sheet.values().update(
                     spreadsheetId=self.spreadsheet_id,
-                    range=f'{self.sheet_name}!A1:M1',
+                    range=f'{self.sheet_name}!A1:N1',
                     valueInputOption='RAW',
                     body=body
                 ).execute()
@@ -231,7 +233,8 @@ class SheetsService:
             ticket_data.get('description', ''),         # Message
             ticket_data.get('channel_id', ''),          # Channel ID
             channel_name,                               # Channel Name
-            custom_fields_json                          # Custom Fields (JSON)
+            custom_fields_json,                         # Custom Fields (JSON)
+            ticket_data.get('internal_message_ts', '')  # Internal Message TS
         ]
 
         body = {
@@ -242,7 +245,7 @@ class SheetsService:
             # Append the row to the sheet
             self.sheet.values().append(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A:M',
+                range=f'{self.sheet_name}!A:N',
                 valueInputOption='RAW',
                 insertDataOption='INSERT_ROWS',
                 body=body
@@ -257,7 +260,7 @@ class SheetsService:
         """
         Read per-channel configuration from a 'Config' sheet tab.
         Expected columns:
-        A: Channel ID | B: Channel Name | C: Admin User IDs | D: Default Assignee | E: Priorities | F: Modal Template Key
+        A: Channel ID | B: Channel Name | C: Admin User IDs | D: Default Assignee | E: Priorities | F: Modal Template Key | G: Internal Channel ID
 
         Returns:
             Dict[channel_id, settings_dict]
@@ -266,22 +269,23 @@ class SheetsService:
             # Try to read the Config tab; if missing, return empty
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range='Config!A2:F'
+                range='Config!A2:G'
             ).execute()
 
             values = result.get('values', [])
             config_map: Dict[str, Dict[str, str]] = {}
             for row in values:
-                row = row + [''] * (6 - len(row))  # Pad to 6 columns
+                row = row + [''] * (7 - len(row))  # Pad to 7 columns
                 channel_id = row[0].strip()
                 if not channel_id:
                     continue
                 config_map[channel_id] = {
-                    'channel_name': row[1].strip(),        # Column B
-                    'admin_user_ids': row[2].strip(),      # Column C
-                    'default_assignee': row[3].strip(),    # Column D
-                    'priorities': row[4].strip(),          # Column E
-                    'modal_template_key': row[5].strip(),  # Column F
+                    'channel_name': row[1].strip(),         # Column B
+                    'admin_user_ids': row[2].strip(),       # Column C
+                    'default_assignee': row[3].strip(),     # Column D
+                    'priorities': row[4].strip(),           # Column E
+                    'modal_template_key': row[5].strip(),   # Column F
+                    'internal_channel_id': row[6].strip(),  # Column G
                 }
             return config_map
         except Exception as e:
@@ -378,7 +382,7 @@ class SheetsService:
         try:
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{self.sheet_name}!A2:M'  # Skip header row, include custom fields column
+                range=f'{self.sheet_name}!A2:N'  # Skip header row, include internal_message_ts column
             ).execute()
 
             values = result.get('values', [])
@@ -386,7 +390,7 @@ class SheetsService:
 
             for row in values:
                 # Ensure row has all required fields, pad with empty strings if needed
-                row = row + [''] * (13 - len(row))  # Pad row to have 13 columns
+                row = row + [''] * (14 - len(row))  # Pad row to have 14 columns
                 
                 if row[0]:  # Only process rows that have a ticket ID
                     ticket_id = row[0].strip()
@@ -411,8 +415,9 @@ class SheetsService:
                         'first_response': row[7],
                         'resolved_at': row[8],
                         'message': row[9],
-                        'channel_id': row[10],     # Channel ID
-                        'channel_name': row[11],   # Channel Name
+                        'channel_id': row[10],           # Channel ID
+                        'channel_name': row[11],         # Channel Name
+                        'internal_message_ts': row[13],  # Internal Message TS
                         **custom_fields  # Merge custom fields into ticket dict
                     }
                     # Keep the most recent version (last occurrence)
@@ -940,4 +945,57 @@ class SheetsService:
             print(f"❌ Error updating ticket from modal: {str(e)}")
             import traceback
             traceback.print_exc()
+            return False
+
+    def update_internal_message_ts(self, ticket_id: str, internal_message_ts: str) -> bool:
+        """
+        Update the internal_message_ts for a ticket.
+        
+        Args:
+            ticket_id (str): ID of the ticket to update
+            internal_message_ts (str): Timestamp of the message in internal channel
+            
+        Returns:
+            bool: True if update was successful, False otherwise
+        """
+        try:
+            # Get all rows to find the ticket
+            range_name = f"{self.sheet_name}!A2:N"
+            result = self.sheet.values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range=range_name
+            ).execute()
+
+            values = result.get("values", [])
+            row_index = None
+
+            # Find the row with matching ticket_id
+            for i, row in enumerate(values):
+                if len(row) > 0 and row[0].strip() == str(ticket_id).strip():
+                    row_index = i + 2  # +2 because sheet rows are 1-indexed and we skip header
+                    break
+
+            if row_index is None:
+                print(f"❌ Ticket {ticket_id} not found for internal_message_ts update")
+                return False
+
+            # Update internal_message_ts (Column N)
+            update_range = f"{self.sheet_name}!N{row_index}"
+            update_body = {
+                "values": [[internal_message_ts]]
+            }
+
+            # Perform the update
+            self.sheet.values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range=update_range,
+                valueInputOption="RAW",
+                body=update_body
+            ).execute()
+
+            print(f"✅ Updated ticket {ticket_id} internal_message_ts to {internal_message_ts}")
+            return True
+
+        except Exception as e:
+            print(f"❌ Error updating internal_message_ts: {str(e)}")
             return False 

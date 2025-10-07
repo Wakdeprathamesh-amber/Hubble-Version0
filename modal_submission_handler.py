@@ -5,6 +5,7 @@ import os
 import json
 import logging
 from modal_builder import extract_modal_values
+from internal_channel_handler import update_internal_channel_message
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,9 @@ def handle_dynamic_modal_submission(ack, body, view, slack_handler):
             
             # Add custom fields to message
             for key, val in custom_data.items():
+                # Skip ID fields
+                if key.endswith('_id'):
+                    continue
                 field_label = key.replace('_', ' ').title()
                 update_lines.append(f"**{field_label}:** {val}")
             
@@ -154,6 +158,43 @@ def handle_dynamic_modal_submission(ack, body, view, slack_handler):
                             logger.info(f"✅ Posted update to thread")
                         except Exception as e:
                             logger.error(f"Error posting to thread: {str(e)}")
+            
+            # Update internal channel message if configured
+            try:
+                cfg_map = slack_handler.ticket_service.sheets_service.get_channel_config_map()
+                cfg = cfg_map.get(channel_id, {})
+                internal_channel_id = cfg.get('internal_channel_id', '').strip()
+                
+                if internal_channel_id and ticket:
+                    internal_message_ts = ticket.get('internal_message_ts', '').strip()
+                    
+                    if internal_message_ts:
+                        logger.info(f"📊 Updating ticket #{ticket_id} in internal channel")
+                        
+                        # Get updated ticket data
+                        updated_ticket = slack_handler.ticket_service.get_ticket(ticket_id)
+                        if updated_ticket:
+                            # Get modal template fields
+                            template_key = cfg.get('modal_template_key', 'tech_default')
+                            fields = slack_handler.ticket_service.sheets_service.get_modal_template(template_key)
+                            
+                            # Update internal channel message
+                            update_success = update_internal_channel_message(
+                                client=client,
+                                internal_channel_id=internal_channel_id,
+                                message_ts=internal_message_ts,
+                                ticket=updated_ticket,
+                                fields=fields or []
+                            )
+                            
+                            if update_success:
+                                logger.info(f"✅ Updated ticket #{ticket_id} in internal channel")
+                            else:
+                                logger.warning(f"⚠️ Failed to update ticket #{ticket_id} in internal channel")
+                    else:
+                        logger.debug(f"No internal message timestamp for ticket #{ticket_id}")
+            except Exception as e:
+                logger.error(f"❌ Error updating internal channel: {str(e)}", exc_info=True)
         else:
             logger.error(f"❌ Failed to update ticket {ticket_id}")
             

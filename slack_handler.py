@@ -171,12 +171,27 @@ class SlackHandler:
                     logger.debug(f"Ignoring message with subtype={subtype}")
                     return
                 
-                # Check if this is a channel message (not DM, not group DM)
+                # Check if this channel is an internal visualization channel
+                # Internal channels should NOT create tickets
+                is_internal_channel = False
+                try:
+                    cfg_map = self.ticket_service.sheets_service.get_channel_config_map()
+                    for main_channel_id, config in cfg_map.items():
+                        internal_ch_id = config.get('internal_channel_id', '').strip()
+                        if internal_ch_id == channel_id:
+                            is_internal_channel = True
+                            logger.info(f"📊 Message in internal channel {channel_id} - skipping ticket creation")
+                            break
+                except Exception as e:
+                    logger.error(f"Error checking if internal channel: {str(e)}")
+                
+                # Check if this is a channel message (not DM, not group DM, not internal channel)
                 # The bot will work in any channel it's invited to
                 # Only create tickets for top-level messages (not thread replies)
                 if (
                     not channel_id.startswith('D')
                     and not channel_id.startswith('G')
+                    and not is_internal_channel  # NEW: Don't create tickets in internal channels
                     and user_id
                     and text
                     and not thread_ts  # ensure this is not a reply in a thread

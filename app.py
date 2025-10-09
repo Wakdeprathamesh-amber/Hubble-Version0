@@ -148,7 +148,8 @@ def handle_view_edit_ticket_direct(payload):
         
         logger.info(f"🔧 Direct handling: View & Edit for ticket {ticket_id} by user {user_id} in channel {channel_id}")
 
-        # Admin enforcement
+        # Check if user is admin (for edit permissions)
+        is_admin = False
         try:
             cfg_map = slack_handler.ticket_service.sheets_service.get_channel_config_map()
             cfg = cfg_map.get(channel_id, {})
@@ -157,21 +158,13 @@ def handle_view_edit_ticket_direct(payload):
                 admin_ids = [u.strip() for u in admin_ids_csv.split(',') if u.strip()]
             else:
                 admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
+            
+            is_admin = user_id in admin_ids
         except Exception:
             admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
+            is_admin = user_id in admin_ids
         
-        if user_id not in admin_ids:
-            from slack_sdk import WebClient
-            client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
-            try:
-                client.chat_postEphemeral(
-                    channel=channel_id,
-                    user=user_id,
-                    text="❌ Only channel admins can view or edit tickets."
-                )
-            except Exception:
-                pass
-            return jsonify({"ok": False, "error": "not_admin"})
+        logger.info(f"🔍 User {user_id} is_admin: {is_admin}")
         
         # Get ticket data
         ticket = slack_handler.ticket_service.get_ticket(ticket_id)
@@ -201,29 +194,34 @@ def handle_view_edit_ticket_direct(payload):
         })
         
         # Create modal payload
+        modal_view = {
+            "type": "modal",
+            "callback_id": "ticket_edit_modal",
+            "title": {
+                "type": "plain_text",
+                "text": f"View Ticket #{ticket_id}" if not is_admin else f"Edit Ticket #{ticket_id}",
+                "emoji": True
+            },
+            "close": {
+                "type": "plain_text",
+                "text": "Close" if not is_admin else "Cancel",
+                "emoji": True
+            },
+            "blocks": modal_blocks,
+            "private_metadata": metadata
+        }
+        
+        # Only add submit button for admins (makes it editable)
+        if is_admin:
+            modal_view["submit"] = {
+                "type": "plain_text",
+                "text": "Update",
+                "emoji": True
+            }
+        
         modal_payload = {
             "trigger_id": payload['trigger_id'],
-            "view": {
-                "type": "modal",
-                "callback_id": "ticket_edit_modal",
-                "title": {
-                    "type": "plain_text",
-                    "text": f"Edit Ticket #{ticket_id}",
-                    "emoji": True
-                },
-                "submit": {
-                    "type": "plain_text",
-                    "text": "Update",
-                    "emoji": True
-                },
-                "close": {
-                    "type": "plain_text",
-                    "text": "Cancel",
-                    "emoji": True
-                },
-                "blocks": modal_blocks,
-                "private_metadata": metadata
-            }
+            "view": modal_view
         }
         
         # Open modal
@@ -353,6 +351,21 @@ def handle_internal_view_edit_direct(payload):
         cfg = cfg_map.get(original_channel_id, {})
         template_key = cfg.get('modal_template_key', 'tech_default')
         
+        # Check if user is admin (anyone can view, only admins can edit)
+        is_admin = False
+        try:
+            admin_ids_csv = cfg.get('admin_user_ids', '')
+            if admin_ids_csv:
+                admin_ids = [u.strip() for u in admin_ids_csv.split(',') if u.strip()]
+            else:
+                admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
+            
+            is_admin = user_id in admin_ids
+        except Exception:
+            is_admin = False
+        
+        logger.info(f"🔍 User {user_id} is_admin: {is_admin}")
+        
         fields = ticket_service.sheets_service.get_modal_template(template_key)
         if not fields:
             return jsonify({"error": "Modal template not found"}), 500
@@ -365,17 +378,35 @@ def handle_internal_view_edit_direct(payload):
             'channel_id': original_channel_id
         })
         
+        # Build modal view (with or without submit button)
+        modal_view = {
+            "type": "modal",
+            "callback_id": "ticket_edit_modal",
+            "title": {
+                "type": "plain_text",
+                "text": f"View Ticket #{ticket_id}" if not is_admin else f"Edit Ticket #{ticket_id}",
+                "emoji": True
+            },
+            "close": {
+                "type": "plain_text",
+                "text": "Close" if not is_admin else "Cancel",
+                "emoji": True
+            },
+            "blocks": modal_blocks,
+            "private_metadata": metadata
+        }
+        
+        # Only add submit button for admins
+        if is_admin:
+            modal_view["submit"] = {
+                "type": "plain_text",
+                "text": "Update",
+                "emoji": True
+            }
+        
         modal_payload = {
             "trigger_id": payload['trigger_id'],
-            "view": {
-                "type": "modal",
-                "callback_id": "ticket_edit_modal",
-                "title": {"type": "plain_text", "text": f"Edit Ticket #{ticket_id}", "emoji": True},
-                "submit": {"type": "plain_text", "text": "Update", "emoji": True},
-                "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
-                "blocks": modal_blocks,
-                "private_metadata": metadata
-            }
+            "view": modal_view
         }
         
         client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
@@ -544,6 +575,27 @@ def handle_modal_submission_direct(payload):
             })
         
         logger.info(f"🔧 Submitting ticket #{ticket_id}")
+        
+        # Permission check - only admins can submit
+        try:
+            cfg_map = ticket_service.sheets_service.get_channel_config_map()
+            cfg = cfg_map.get(channel_id, {})
+            admin_ids_csv = cfg.get('admin_user_ids', '')
+            if admin_ids_csv:
+                admin_ids = [u.strip() for u in admin_ids_csv.split(',') if u.strip()]
+            else:
+                admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
+            
+            if user_id not in admin_ids:
+                logger.warning(f"⚠️ Non-admin {user_id} tried to submit modal")
+                return jsonify({
+                    "response_action": "errors",
+                    "errors": {
+                        "description": "Only admins can update tickets."
+                    }
+                })
+        except Exception:
+            pass  # If check fails, allow (fail open)
         
         # Get template fields
         fields = ticket_service.sheets_service.get_modal_template(template_key)

@@ -138,26 +138,9 @@ def handle_dynamic_modal_submission(ack, body, view, slack_handler):
                 field_label = key.replace('_', ' ').title()
                 update_lines.append(f"**{field_label}:** {val}")
             
-            update_message = "\n".join(update_lines)
-            
-            # Post to thread
+            # Silent update - no message to thread
+            logger.info(f"✅ Ticket updated silently (no thread message)")
             ticket = slack_handler.ticket_service.get_ticket(ticket_id)
-            if ticket and ticket.get("thread_link"):
-                thread_link = ticket["thread_link"]
-                if "/p" in thread_link:
-                    timestamp_part = thread_link.split("/p")[-1]
-                    if len(timestamp_part) >= 10:
-                        thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
-                        post_channel = ticket.get("channel_id") or channel_id
-                        try:
-                            client.chat_postMessage(
-                                channel=post_channel,
-                                thread_ts=thread_ts,
-                                text=update_message
-                            )
-                            logger.info(f"✅ Posted update to thread")
-                        except Exception as e:
-                            logger.error(f"Error posting to thread: {str(e)}")
             
             # Update internal channel message if configured
             try:

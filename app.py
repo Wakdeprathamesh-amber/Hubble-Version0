@@ -287,17 +287,13 @@ def handle_close_ticket_direct(payload):
         success = slack_handler.ticket_service.update_ticket_status(ticket_id, "Closed")
         
         if success:
-            # Send confirmation
+            # Silent close - no message
             from slack_sdk import WebClient
             from internal_channel_handler import update_internal_channel_message
             
             client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
             
-            client.chat_postMessage(
-                channel=channel_id,
-                thread_ts=thread_ts,
-                text=f"✅ Ticket #{ticket_id} has been closed by <@{user_id}>"
-            )
+            logger.info(f"✅ Ticket closed silently (no thread message)")
             
             # Update internal channel if configured
             try:
@@ -449,20 +445,8 @@ def handle_internal_assign_me_direct(payload):
                         fields=fields or []
                     )
                 
-                # Post to original thread
-                thread_link = ticket.get("thread_link", "")
-                if thread_link and "/p" in thread_link:
-                    timestamp_part = thread_link.split("/p")[-1]
-                    if len(timestamp_part) >= 10:
-                        thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
-                        try:
-                            client.chat_postMessage(
-                                channel=original_channel_id,
-                                thread_ts=thread_ts,
-                                text=f"👤 Ticket #{ticket_id} assigned to <@{user_id}> ({user_name})"
-                            )
-                        except Exception as e:
-                            logger.error(f"Error posting to thread: {str(e)}")
+                # Silent update - no message to thread
+                logger.info(f"✅ Ticket assigned silently (no thread message)")
             
             logger.info(f"✅ Assigned ticket {ticket_id} to {user_name}")
             return jsonify({"ok": True})
@@ -520,21 +504,8 @@ def handle_internal_change_status_direct(payload):
                         fields=fields or []
                     )
                 
-                # Post to original thread
-                thread_link = updated_ticket.get("thread_link", "")
-                if thread_link and "/p" in thread_link:
-                    timestamp_part = thread_link.split("/p")[-1]
-                    if len(timestamp_part) >= 10:
-                        thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
-                        try:
-                            status_emoji = "✅" if new_status == "Closed" else "🔵"
-                            client.chat_postMessage(
-                                channel=original_channel_id,
-                                thread_ts=thread_ts,
-                                text=f"{status_emoji} Ticket #{ticket_id} status changed to *{new_status}* by <@{user_id}>"
-                            )
-                        except Exception as e:
-                            logger.error(f"Error posting to thread: {str(e)}")
+                # Silent update - no message to thread
+                logger.info(f"✅ Status changed silently (no thread message)")
             
             logger.info(f"✅ Changed ticket {ticket_id} status to {new_status}")
             return jsonify({"ok": True})
@@ -659,24 +630,8 @@ def handle_modal_submission_direct(payload):
             
             update_message = "\n".join(update_lines)
             
-            # Post to original thread
-            ticket = ticket_service.get_ticket(ticket_id)
-            if ticket and ticket.get("thread_link"):
-                thread_link = ticket["thread_link"]
-                if "/p" in thread_link:
-                    timestamp_part = thread_link.split("/p")[-1]
-                    if len(timestamp_part) >= 10:
-                        thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
-                        post_channel = ticket.get("channel_id") or channel_id
-                        try:
-                            client.chat_postMessage(
-                                channel=post_channel,
-                                thread_ts=thread_ts,
-                                text=update_message
-                            )
-                            logger.info(f"✅ Posted update to thread")
-                        except Exception as e:
-                            logger.error(f"Error posting to thread: {str(e)}")
+            # Silent update - no message to thread
+            logger.info(f"✅ Ticket updated silently (no thread message)")
             
             # Update internal channel
             try:

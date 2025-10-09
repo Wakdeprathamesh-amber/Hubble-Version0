@@ -633,14 +633,21 @@ def handle_modal_submission_direct(payload):
             # Silent update - no message to thread
             logger.info(f"✅ Ticket updated silently (no thread message)")
             
+            # Get the updated ticket data
+            ticket = ticket_service.get_ticket(ticket_id)
+            
             # Update internal channel
             try:
                 cfg_map = ticket_service.sheets_service.get_channel_config_map()
                 cfg = cfg_map.get(channel_id, {})
                 internal_channel_id = cfg.get('internal_channel_id', '').strip()
                 
+                logger.info(f"🔍 Config check: channel_id={channel_id}, internal_channel_id={internal_channel_id}")
+                
                 if internal_channel_id and ticket:
                     internal_message_ts = ticket.get('internal_message_ts', '').strip()
+                    
+                    logger.info(f"🔍 Internal message check: ts={internal_message_ts}")
                     
                     if internal_message_ts:
                         logger.info(f"📊 Updating internal channel")

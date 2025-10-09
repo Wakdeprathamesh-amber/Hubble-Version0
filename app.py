@@ -286,6 +286,8 @@ def handle_close_ticket_direct(payload):
         if success:
             # Send confirmation
             from slack_sdk import WebClient
+            from internal_channel_handler import update_internal_channel_message
+            
             client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
             
             client.chat_postMessage(
@@ -293,6 +295,33 @@ def handle_close_ticket_direct(payload):
                 thread_ts=thread_ts,
                 text=f"✅ Ticket #{ticket_id} has been closed by <@{user_id}>"
             )
+            
+            # Update internal channel if configured
+            try:
+                cfg_map = slack_handler.ticket_service.sheets_service.get_channel_config_map()
+                cfg = cfg_map.get(channel_id, {})
+                internal_channel_id = cfg.get('internal_channel_id', '').strip()
+                
+                if internal_channel_id:
+                    # Get updated ticket
+                    ticket = slack_handler.ticket_service.get_ticket(ticket_id)
+                    if ticket:
+                        internal_message_ts = ticket.get('internal_message_ts', '').strip()
+                        
+                        if internal_message_ts:
+                            template_key = cfg.get('modal_template_key', 'tech_default')
+                            fields = slack_handler.ticket_service.sheets_service.get_modal_template(template_key)
+                            
+                            update_internal_channel_message(
+                                client=client,
+                                internal_channel_id=internal_channel_id,
+                                message_ts=internal_message_ts,
+                                ticket=ticket,
+                                fields=fields or []
+                            )
+                            logger.info(f"✅ Updated ticket #{ticket_id} in internal channel after close")
+            except Exception as e:
+                logger.error(f"Error updating internal channel after close: {str(e)}", exc_info=True)
             
             return jsonify({"ok": True})
         else:
@@ -388,8 +417,12 @@ def handle_internal_assign_me_direct(payload):
         
         assignee_display = f"@{user_name}"
         
-        # Update ticket
-        success = ticket_service.sheets_service.update_ticket_assignee(ticket_id, assignee_display)
+        # Update ticket (also store user_id for modal pre-fill)
+        success = ticket_service.sheets_service.update_ticket_assignee(
+            ticket_id=ticket_id,
+            assignee_id=assignee_display,
+            user_id=user_id
+        )
         
         if success:
             # Get updated ticket

@@ -139,8 +139,12 @@ class SlackHandler:
                 ticket_id = parts[0]
                 assignee = parts[1].strip("<@>")
                 
-                # Update ticket assignee
-                success = self.ticket_service.update_ticket_assignee(ticket_id, assignee)
+                # Update ticket assignee (pass assignee as both display and user_id)
+                success = self.ticket_service.update_ticket_assignee(
+                    ticket_id=ticket_id,
+                    assignee_id=assignee,
+                    user_id=assignee if assignee.startswith('U') else None
+                )
                 if success:
                     say(f"✅ Ticket #{ticket_id} assigned to <@{assignee}>")
                 else:
@@ -660,10 +664,11 @@ We've recorded the details and notified the relevant team. You can track progres
                 user_name = self._get_user_name(client, user_id)
                 assignee_display = f"@{user_name}"
                 
-                # Update ticket assignee
+                # Update ticket assignee (also store user_id for modal pre-fill)
                 success = self.ticket_service.sheets_service.update_ticket_assignee(
                     ticket_id=ticket_id,
-                    assignee_id=assignee_display
+                    assignee_id=assignee_display,
+                    user_id=user_id
                 )
                 
                 if success:

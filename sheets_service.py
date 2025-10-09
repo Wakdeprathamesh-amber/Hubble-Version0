@@ -513,20 +513,21 @@ class SheetsService:
             print(f"❌ Error updating ticket status: {str(e)}")
             return False
 
-    def update_ticket_assignee(self, ticket_id: str, assignee_id: str) -> bool:
+    def update_ticket_assignee(self, ticket_id: str, assignee_id: str, user_id: str = None) -> bool:
         """
         Update the assignee of a specific ticket.
         
         Args:
             ticket_id (str): ID of the ticket to update
-            assignee_id (str): ID of the user to assign the ticket to
+            assignee_id (str): Display name of the assignee (e.g., "@Prathamesh")
+            user_id (str): Optional Slack user ID (e.g., "U08S2KRG2F9") to store in custom_fields
             
         Returns:
             bool: True if update was successful, False otherwise
         """
         try:
             # Get all rows to find the ticket
-            range_name = f"{self.sheet_name}!A2:K"
+            range_name = f"{self.sheet_name}!A2:N"
             result = self.sheet.values().get(
                 spreadsheetId=self.spreadsheet_id,
                 range=range_name
@@ -534,30 +535,54 @@ class SheetsService:
 
             values = result.get("values", [])
             row_index = None
+            current_row = None
 
             # Find the row with matching ticket_id
             for i, row in enumerate(values):
                 if len(row) > 0 and row[0].strip() == ticket_id.strip():
                     row_index = i + 2  # +2 because sheet rows are 1-indexed and we skip header
+                    current_row = row + [''] * (14 - len(row))  # Pad to 14 columns
                     break
 
             if row_index is None:
                 print(f"❌ Ticket {ticket_id} not found for assignee update")
                 return False
 
-            # Update assignee
+            # Update assignee display name (Column F)
             update_range = f"{self.sheet_name}!F{row_index}"
             update_body = {
                 "values": [[assignee_id]]
             }
 
-            # Perform the update
             self.sheet.values().update(
                 spreadsheetId=self.spreadsheet_id,
                 range=update_range,
                 valueInputOption="RAW",
                 body=update_body
             ).execute()
+
+            # Also update custom_fields to include assignee_id if provided
+            if user_id:
+                import json
+                # Get existing custom fields
+                custom_fields_json = current_row[12] if len(current_row) > 12 else ''
+                try:
+                    custom_fields = json.loads(custom_fields_json) if custom_fields_json else {}
+                except:
+                    custom_fields = {}
+                
+                # Add/update assignee_id
+                custom_fields['assignee_id'] = user_id
+                
+                # Save back to sheet
+                custom_fields_range = f"{self.sheet_name}!M{row_index}"
+                self.sheet.values().update(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=custom_fields_range,
+                    valueInputOption="RAW",
+                    body={"values": [[json.dumps(custom_fields)]]}
+                ).execute()
+                print(f"✅ Stored assignee_id {user_id} in custom_fields")
 
             # Verify the update
             verify_result = self.sheet.values().get(

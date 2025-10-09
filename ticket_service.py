@@ -127,7 +127,7 @@ class TicketService:
             logger.error(f"Error updating ticket status: {str(e)}")
             return False
     
-    def update_ticket_assignee(self, ticket_id, assignee_id):
+    def update_ticket_assignee(self, ticket_id, assignee_id, user_id=None):
         """Update ticket assignee"""
         try:
             ticket = self.get_ticket(ticket_id)
@@ -135,10 +135,11 @@ class TicketService:
                 logger.error(f"Ticket {ticket_id} not found")
                 return False
             
-            # Update the ticket
+            # Update the ticket (pass user_id for custom_fields storage)
             success = self.sheets_service.update_ticket_assignee(
                 ticket_id=ticket_id,
-                assignee_id=assignee_id
+                assignee_id=assignee_id,
+                user_id=user_id
             )
             
             if success:

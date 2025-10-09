@@ -48,24 +48,32 @@ def build_modal_blocks(fields: List[Dict], ticket_data: Optional[Dict] = None) -
                 }
             }
             # Pre-fill if data exists and looks like a user ID (starts with U)
-            # Check custom_fields first (stored as field_id), then check the _id variant
-            initial_val = (
-                ticket_data.get(f"{field_id}_id", "") or  # Try field_id (from custom_fields)
-                ticket_data.get(field_id, "")              # Fall back to field itself
-            )
-            # Handle special mappings
-            if field_id == "requester" and not initial_val:
-                # Extract user ID from created_by if it looks like a user ID
-                created_by = ticket_data.get("created_by", "")
-                # If created_by starts with U, use it directly
-                if created_by.startswith('U'):
-                    initial_val = created_by
+            initial_val = ""
             
-            if field_id == "assignee" and not initial_val:
-                # Extract user ID from assignee if available in custom fields
-                assignee_id = ticket_data.get("assignee_id", "")
-                if assignee_id.startswith('U'):
-                    initial_val = assignee_id
+            # For requester field, check multiple sources
+            if field_id == "requester":
+                # 1. Check requester_id from custom_fields
+                initial_val = ticket_data.get("requester_id", "")
+                # 2. Fall back to created_by if it's a user ID
+                if not initial_val or not initial_val.startswith('U'):
+                    created_by = ticket_data.get("created_by", "")
+                    if created_by and created_by.startswith('U'):
+                        initial_val = created_by
+            
+            # For assignee field, check multiple sources
+            elif field_id == "assignee":
+                # 1. Check assignee_id from custom_fields
+                initial_val = ticket_data.get("assignee_id", "")
+                # 2. Fall back to assignee if it's a user ID
+                if not initial_val or not initial_val.startswith('U'):
+                    assignee = ticket_data.get("assignee", "")
+                    if assignee and assignee.startswith('U'):
+                        initial_val = assignee
+            
+            # For any other user_select field
+            else:
+                # Check field_id from custom_fields, then field_id_id variant
+                initial_val = ticket_data.get(f"{field_id}_id", "") or ticket_data.get(field_id, "")
             
             # Only set initial_user if we have a valid Slack user ID
             if initial_val and isinstance(initial_val, str) and initial_val.startswith('U'):

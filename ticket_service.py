@@ -32,6 +32,21 @@ class TicketService:
             self.next_ticket_id += 1
             
             current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Store user IDs in custom_fields so modal can pre-fill them
+            custom_fields = {
+                'requester_id': requester_id,  # Store the actual user ID (U08S2KRG2F9)
+            }
+            
+            # If default assignee is set, try to extract user ID
+            default_assignee_name = ''
+            try:
+                cfg_map = self.sheets_service.get_channel_config_map()
+                cfg = cfg_map.get(channel_id, {})
+                default_assignee_name = cfg.get('default_assignee', '').strip()
+            except:
+                pass
+            
             ticket_data = {
                 'ticket_id': ticket_id,
                 'thread_ts': thread_ts,
@@ -40,11 +55,12 @@ class TicketService:
                 'requester_name': requester_name or f"@{requester_id}",  # Use real name if provided
                 'status': 'Open',  # Default status is Open
                 'priority': priority,
-                'assignee': '',
+                'assignee': default_assignee_name,
                 'created_at': current_time,
                 'updated_at': current_time,
                 'resolved_at': '',
-                'description': message_text
+                'description': message_text,
+                'custom_fields': custom_fields  # Pass custom fields for storage
             }
             
             success = self.sheets_service.append_ticket(ticket_data)

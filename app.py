@@ -122,14 +122,17 @@ def slack_interactive():
                 elif action_id == 'internal_change_status':
                     return handle_internal_change_status_direct(payload)
         
-        # For all other cases (view_submission, etc.), delegate to Slack Bolt
-        try:
-            logger.info(f"🔄 Delegating to Slack Bolt handler")
-            response = slack_handler.handler.handle(request)
-            return response
-        except Exception as e:
-            logger.error(f"❌ Error processing interactive request: {str(e)}", exc_info=True)
-            return jsonify({"error": str(e)}), 500
+        elif payload.get('type') == 'view_submission':
+            # Handle modal submissions directly
+            logger.info(f"🔧 MODAL SUBMISSION")
+            callback_id = payload.get('view', {}).get('callback_id')
+            
+            if callback_id == 'ticket_edit_modal':
+                return handle_modal_submission_direct(payload)
+        
+        # For any other unknown types, log and return error
+        logger.warning(f"⚠️ Unknown interaction type: {payload.get('type')}")
+        return jsonify({"error": "Unknown interaction type"}), 400
             
     except Exception as e:
         logger.error(f"❌ Error processing interactive request: {str(e)}", exc_info=True)
@@ -541,6 +544,186 @@ def handle_internal_change_status_direct(payload):
     except Exception as e:
         logger.error(f"Error in internal change status: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+def handle_modal_submission_direct(payload):
+    """Handle modal submission directly without Slack Bolt"""
+    try:
+        from slack_sdk import WebClient
+        from modal_builder import extract_modal_values
+        from internal_channel_handler import update_internal_channel_message
+        
+        logger.info("🔧 Direct modal submission handler")
+        
+        view = payload['view']
+        user_id = payload['user']['id']
+        
+        # Parse metadata
+        try:
+            metadata = json.loads(view["private_metadata"])
+            ticket_id = metadata['ticket_id']
+            template_key = metadata['template_key']
+            channel_id = metadata['channel_id']
+        except Exception as e:
+            logger.error(f"Failed to parse metadata: {str(e)}")
+            return jsonify({
+                "response_action": "errors",
+                "errors": {
+                    "description": "Invalid ticket data. Please try again."
+                }
+            })
+        
+        logger.info(f"🔧 Submitting ticket #{ticket_id}")
+        
+        # Get template fields
+        fields = ticket_service.sheets_service.get_modal_template(template_key)
+        
+        # Extract submitted values
+        values = view["state"]["values"]
+        submitted_data = extract_modal_values(values, fields)
+        
+        logger.info(f"🔧 Extracted {len(submitted_data)} fields")
+        
+        # Separate core fields from custom fields
+        core_field_ids = {'requester', 'status', 'assignee', 'priority', 'description'}
+        core_data = {}
+        custom_data = {}
+        
+        for field_id, value in submitted_data.items():
+            if field_id in core_field_ids:
+                core_data[field_id] = value
+            else:
+                custom_data[field_id] = value
+        
+        # Create Slack client
+        client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
+        
+        # Convert user IDs to display names
+        requester_id = core_data.get('requester', '')
+        assignee_id = core_data.get('assignee', '')
+        
+        def get_user_name(uid):
+            try:
+                user_info = client.users_info(user=uid)
+                if user_info["ok"]:
+                    return user_info["user"].get("real_name", user_info["user"].get("name", "Unknown"))
+            except:
+                pass
+            return "Unknown"
+        
+        requester_name = get_user_name(requester_id) if requester_id else ''
+        assignee_name = get_user_name(assignee_id) if assignee_id else ''
+        
+        requester = f"@{requester_name}" if requester_name else ''
+        assignee = f"@{assignee_name}" if assignee_name else ''
+        
+        status = core_data.get('status', 'Open')
+        priority = core_data.get('priority', 'MEDIUM')
+        description = core_data.get('description', '')
+        
+        # Store user IDs in custom_data
+        if requester_id:
+            custom_data['requester_id'] = requester_id
+        if assignee_id:
+            custom_data['assignee_id'] = assignee_id
+        
+        logger.info(f"🔧 Updating: Status={status}, Assignee={assignee}, Priority={priority}")
+        
+        # Update ticket in Sheets
+        success = ticket_service.update_ticket_from_modal(
+            ticket_id=ticket_id,
+            requester=requester,
+            status=status,
+            assignee=assignee,
+            priority=priority,
+            description=description,
+            custom_fields=custom_data
+        )
+        
+        if success:
+            logger.info(f"✅ Updated ticket {ticket_id}")
+            
+            # Build update message
+            update_lines = [f"✅ *Ticket #{ticket_id} Updated*", "", f"**Updated by:** <@{user_id}>"]
+            
+            if requester_id:
+                update_lines.append(f"**Requester:** <@{requester_id}> ({requester_name})")
+            if status:
+                update_lines.append(f"**Status:** {status}")
+            if assignee_id:
+                update_lines.append(f"**Assignee:** <@{assignee_id}> ({assignee_name})")
+            if priority:
+                update_lines.append(f"**Priority:** {priority}")
+            if description:
+                desc_preview = description[:100] + "..." if len(description) > 100 else description
+                update_lines.append(f"**Description:** {desc_preview}")
+            
+            update_message = "\n".join(update_lines)
+            
+            # Post to original thread
+            ticket = ticket_service.get_ticket(ticket_id)
+            if ticket and ticket.get("thread_link"):
+                thread_link = ticket["thread_link"]
+                if "/p" in thread_link:
+                    timestamp_part = thread_link.split("/p")[-1]
+                    if len(timestamp_part) >= 10:
+                        thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
+                        post_channel = ticket.get("channel_id") or channel_id
+                        try:
+                            client.chat_postMessage(
+                                channel=post_channel,
+                                thread_ts=thread_ts,
+                                text=update_message
+                            )
+                            logger.info(f"✅ Posted update to thread")
+                        except Exception as e:
+                            logger.error(f"Error posting to thread: {str(e)}")
+            
+            # Update internal channel
+            try:
+                cfg_map = ticket_service.sheets_service.get_channel_config_map()
+                cfg = cfg_map.get(channel_id, {})
+                internal_channel_id = cfg.get('internal_channel_id', '').strip()
+                
+                if internal_channel_id and ticket:
+                    internal_message_ts = ticket.get('internal_message_ts', '').strip()
+                    
+                    if internal_message_ts:
+                        logger.info(f"📊 Updating internal channel")
+                        
+                        updated_ticket = ticket_service.get_ticket(ticket_id)
+                        if updated_ticket:
+                            fields_for_display = ticket_service.sheets_service.get_modal_template(template_key)
+                            
+                            update_internal_channel_message(
+                                client=client,
+                                internal_channel_id=internal_channel_id,
+                                message_ts=internal_message_ts,
+                                ticket=updated_ticket,
+                                fields=fields_for_display or []
+                            )
+                            logger.info(f"✅ Updated internal channel")
+            except Exception as e:
+                logger.error(f"Error updating internal channel: {str(e)}", exc_info=True)
+            
+            # Return success response (close modal)
+            return jsonify({"response_action": "clear"})
+        else:
+            logger.error(f"❌ Failed to update ticket {ticket_id}")
+            return jsonify({
+                "response_action": "errors",
+                "errors": {
+                    "description": "Failed to update ticket. Please try again."
+                }
+            })
+            
+    except Exception as e:
+        logger.error(f"❌ Error in modal submission: {str(e)}", exc_info=True)
+        return jsonify({
+            "response_action": "errors",
+            "errors": {
+                "description": "An error occurred. Please try again."
+            }
+        })
 
 @app.route("/tickets", methods=["GET"])
 def get_tickets():

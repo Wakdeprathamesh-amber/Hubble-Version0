@@ -109,13 +109,16 @@ def slack_interactive():
                 
                 logger.info(f"🔘 ACTION: {action_id}")
                 
+                # Handle main channel buttons directly (for performance)
                 if action_id == 'view_edit_ticket':
                     return handle_view_edit_ticket_direct(payload)
                 elif action_id == 'close_ticket':
                     return handle_close_ticket_direct(payload)
+                # For all other actions (including internal channel buttons),
+                # fall through to Slack Bolt handler below
                 else:
-                    logger.warning(f"Unknown action_id: {action_id}")
-                    return jsonify({"error": "Unknown action"}), 400
+                    logger.info(f"🔄 Delegating action '{action_id}' to Slack Bolt handler")
+                    # Don't return 400, let it fall through to Slack Bolt handler
         elif payload.get('type') == 'view_submission':
             # Delegate to Slack Bolt handler which uses dynamic modal system
             logger.info(f"🔧 MODAL SUBMISSION: Delegating to Slack Bolt handler")

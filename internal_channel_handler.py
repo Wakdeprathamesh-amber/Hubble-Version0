@@ -205,7 +205,6 @@ def format_ticket_card(ticket: Dict, fields: List[Dict], include_buttons: bool =
                     "text": "🔄 Change Status",
                     "emoji": True
                 },
-                "style": "danger" if status == "Open" else "default",
                 "action_id": "internal_change_status",
                 "value": ticket_id
             }

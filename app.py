@@ -141,6 +141,8 @@ def slack_interactive():
 def handle_view_edit_ticket_direct(payload):
     """Handle View & Edit button click with dynamic modal"""
     try:
+        from modal_view_builder import build_view_only_blocks
+        
         # Extract data from payload
         user_id = payload['user']['id']
         ticket_id = payload['actions'][0]['value']
@@ -183,8 +185,13 @@ def handle_view_edit_ticket_direct(payload):
             logger.error(f"No fields found for template '{template_key}'")
             return jsonify({"error": "Modal template not found"}), 500
         
-        # Build dynamic modal blocks
-        modal_blocks = build_modal_blocks(fields, ticket)
+        # Build modal blocks (different for admins vs non-admins)
+        if is_admin:
+            # Editable modal with input blocks
+            modal_blocks = build_modal_blocks(fields, ticket)
+        else:
+            # View-only modal with section blocks
+            modal_blocks = build_view_only_blocks(fields, ticket)
         
         # Store metadata
         metadata = json.dumps({
@@ -333,6 +340,7 @@ def handle_internal_view_edit_direct(payload):
     try:
         from slack_sdk import WebClient
         from modal_builder import build_modal_blocks
+        from modal_view_builder import build_view_only_blocks
         
         user_id = payload['user']['id']
         ticket_id = payload['actions'][0]['value']
@@ -370,8 +378,13 @@ def handle_internal_view_edit_direct(payload):
         if not fields:
             return jsonify({"error": "Modal template not found"}), 500
         
-        # Build modal
-        modal_blocks = build_modal_blocks(fields, ticket)
+        # Build modal blocks (different for admins vs non-admins)
+        if is_admin:
+            # Editable modal with input blocks
+            modal_blocks = build_modal_blocks(fields, ticket)
+        else:
+            # View-only modal with section blocks
+            modal_blocks = build_view_only_blocks(fields, ticket)
         metadata = json.dumps({
             'ticket_id': ticket_id,
             'template_key': template_key,

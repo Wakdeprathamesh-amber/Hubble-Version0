@@ -87,7 +87,7 @@ def slack_interactive():
     try:
         logger.info(f"🔘 INTERACTIVE: {request.method} {request.path}")
         
-        # Parse the payload
+        # Parse the payload to check action type
         if request.content_type == "application/x-www-form-urlencoded":
             form_data = request.form
             if 'payload' in form_data:
@@ -109,24 +109,22 @@ def slack_interactive():
                 
                 logger.info(f"🔘 ACTION: {action_id}")
                 
-                # Handle main channel buttons directly (for performance)
+                # Handle main channel buttons directly
                 if action_id == 'view_edit_ticket':
                     return handle_view_edit_ticket_direct(payload)
                 elif action_id == 'close_ticket':
                     return handle_close_ticket_direct(payload)
-                # For all other actions (including internal channel buttons),
-                # fall through to Slack Bolt handler below
-                else:
-                    logger.info(f"🔄 Delegating action '{action_id}' to Slack Bolt handler")
-                    # Don't return 400, let it fall through to Slack Bolt handler
-        elif payload.get('type') == 'view_submission':
-            # Delegate to Slack Bolt handler which uses dynamic modal system
-            logger.info(f"🔧 MODAL SUBMISSION: Delegating to Slack Bolt handler")
-            # Let Slack Bolt handler process it
-            pass
+                # Handle internal channel buttons directly
+                elif action_id == 'internal_view_edit':
+                    return handle_internal_view_edit_direct(payload)
+                elif action_id == 'internal_assign_me':
+                    return handle_internal_assign_me_direct(payload)
+                elif action_id == 'internal_change_status':
+                    return handle_internal_change_status_direct(payload)
         
-        # Try Slack Bolt handler as fallback
+        # For all other cases (view_submission, etc.), delegate to Slack Bolt
         try:
+            logger.info(f"🔄 Delegating to Slack Bolt handler")
             response = slack_handler.handler.handle(request)
             return response
         except Exception as e:
@@ -302,6 +300,213 @@ def handle_close_ticket_direct(payload):
                 
     except Exception as e:
         logger.error(f"Error in direct close handler: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+def handle_internal_view_edit_direct(payload):
+    """Handle View & Edit button from internal channel"""
+    try:
+        from slack_sdk import WebClient
+        from modal_builder import build_modal_blocks
+        
+        user_id = payload['user']['id']
+        ticket_id = payload['actions'][0]['value']
+        channel_id = payload['channel']['id']  # Internal channel
+        
+        logger.info(f"📊 Internal: View/Edit ticket {ticket_id}")
+        
+        # Get ticket
+        ticket = ticket_service.get_ticket(ticket_id)
+        if not ticket:
+            return jsonify({"error": "Ticket not found"}), 404
+        
+        # Get modal template
+        original_channel_id = ticket.get('channel_id', '')
+        cfg_map = ticket_service.sheets_service.get_channel_config_map()
+        cfg = cfg_map.get(original_channel_id, {})
+        template_key = cfg.get('modal_template_key', 'tech_default')
+        
+        fields = ticket_service.sheets_service.get_modal_template(template_key)
+        if not fields:
+            return jsonify({"error": "Modal template not found"}), 500
+        
+        # Build modal
+        modal_blocks = build_modal_blocks(fields, ticket)
+        metadata = json.dumps({
+            'ticket_id': ticket_id,
+            'template_key': template_key,
+            'channel_id': original_channel_id
+        })
+        
+        modal_payload = {
+            "trigger_id": payload['trigger_id'],
+            "view": {
+                "type": "modal",
+                "callback_id": "ticket_edit_modal",
+                "title": {"type": "plain_text", "text": f"Edit Ticket #{ticket_id}", "emoji": True},
+                "submit": {"type": "plain_text", "text": "Update", "emoji": True},
+                "close": {"type": "plain_text", "text": "Cancel", "emoji": True},
+                "blocks": modal_blocks,
+                "private_metadata": metadata
+            }
+        }
+        
+        client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
+        response = client.views_open(**modal_payload)
+        
+        if response['ok']:
+            logger.info(f"✅ Opened modal for ticket {ticket_id}")
+            return jsonify({"ok": True})
+        else:
+            return jsonify({"error": "Failed to open modal"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in internal view/edit: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+def handle_internal_assign_me_direct(payload):
+    """Handle Assign to Me button from internal channel"""
+    try:
+        from slack_sdk import WebClient
+        from internal_channel_handler import update_internal_channel_message
+        
+        user_id = payload['user']['id']
+        ticket_id = payload['actions'][0]['value']
+        channel_id = payload['channel']['id']  # Internal channel
+        
+        logger.info(f"📊 Internal: Assign to Me ticket {ticket_id}")
+        
+        # Get user's name
+        client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
+        try:
+            user_info = client.users_info(user=user_id)
+            if user_info["ok"]:
+                user_name = user_info["user"].get("real_name", user_info["user"].get("name", "Unknown"))
+            else:
+                user_name = "Unknown"
+        except:
+            user_name = "Unknown"
+        
+        assignee_display = f"@{user_name}"
+        
+        # Update ticket
+        success = ticket_service.sheets_service.update_ticket_assignee(ticket_id, assignee_display)
+        
+        if success:
+            # Get updated ticket
+            ticket = ticket_service.get_ticket(ticket_id)
+            if ticket:
+                # Update internal channel card
+                internal_message_ts = ticket.get('internal_message_ts', '').strip()
+                original_channel_id = ticket.get('channel_id', '')
+                
+                cfg_map = ticket_service.sheets_service.get_channel_config_map()
+                cfg = cfg_map.get(original_channel_id, {})
+                template_key = cfg.get('modal_template_key', 'tech_default')
+                fields = ticket_service.sheets_service.get_modal_template(template_key)
+                
+                if internal_message_ts:
+                    update_internal_channel_message(
+                        client=client,
+                        internal_channel_id=channel_id,
+                        message_ts=internal_message_ts,
+                        ticket=ticket,
+                        fields=fields or []
+                    )
+                
+                # Post to original thread
+                thread_link = ticket.get("thread_link", "")
+                if thread_link and "/p" in thread_link:
+                    timestamp_part = thread_link.split("/p")[-1]
+                    if len(timestamp_part) >= 10:
+                        thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
+                        try:
+                            client.chat_postMessage(
+                                channel=original_channel_id,
+                                thread_ts=thread_ts,
+                                text=f"👤 Ticket #{ticket_id} assigned to <@{user_id}> ({user_name})"
+                            )
+                        except Exception as e:
+                            logger.error(f"Error posting to thread: {str(e)}")
+            
+            logger.info(f"✅ Assigned ticket {ticket_id} to {user_name}")
+            return jsonify({"ok": True})
+        else:
+            return jsonify({"error": "Failed to assign ticket"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in internal assign me: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+def handle_internal_change_status_direct(payload):
+    """Handle Change Status button from internal channel"""
+    try:
+        from slack_sdk import WebClient
+        from internal_channel_handler import update_internal_channel_message
+        
+        user_id = payload['user']['id']
+        ticket_id = payload['actions'][0]['value']
+        channel_id = payload['channel']['id']  # Internal channel
+        
+        logger.info(f"📊 Internal: Change Status ticket {ticket_id}")
+        
+        # Get current ticket
+        ticket = ticket_service.get_ticket(ticket_id)
+        if not ticket:
+            return jsonify({"error": "Ticket not found"}), 404
+        
+        current_status = ticket.get('status', 'Open')
+        new_status = "Closed" if current_status == "Open" else "Open"
+        
+        # Update status
+        success = ticket_service.update_ticket_status(ticket_id, new_status)
+        
+        if success:
+            # Get updated ticket
+            updated_ticket = ticket_service.get_ticket(ticket_id)
+            if updated_ticket:
+                client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
+                
+                # Update internal channel card
+                internal_message_ts = updated_ticket.get('internal_message_ts', '').strip()
+                original_channel_id = updated_ticket.get('channel_id', '')
+                
+                cfg_map = ticket_service.sheets_service.get_channel_config_map()
+                cfg = cfg_map.get(original_channel_id, {})
+                template_key = cfg.get('modal_template_key', 'tech_default')
+                fields = ticket_service.sheets_service.get_modal_template(template_key)
+                
+                if internal_message_ts:
+                    update_internal_channel_message(
+                        client=client,
+                        internal_channel_id=channel_id,
+                        message_ts=internal_message_ts,
+                        ticket=updated_ticket,
+                        fields=fields or []
+                    )
+                
+                # Post to original thread
+                thread_link = updated_ticket.get("thread_link", "")
+                if thread_link and "/p" in thread_link:
+                    timestamp_part = thread_link.split("/p")[-1]
+                    if len(timestamp_part) >= 10:
+                        thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
+                        try:
+                            status_emoji = "✅" if new_status == "Closed" else "🔵"
+                            client.chat_postMessage(
+                                channel=original_channel_id,
+                                thread_ts=thread_ts,
+                                text=f"{status_emoji} Ticket #{ticket_id} status changed to *{new_status}* by <@{user_id}>"
+                            )
+                        except Exception as e:
+                            logger.error(f"Error posting to thread: {str(e)}")
+            
+            logger.info(f"✅ Changed ticket {ticket_id} status to {new_status}")
+            return jsonify({"ok": True})
+        else:
+            return jsonify({"error": "Failed to change status"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in internal change status: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route("/tickets", methods=["GET"])

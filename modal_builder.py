@@ -48,8 +48,27 @@ def build_modal_blocks(fields: List[Dict], ticket_data: Optional[Dict] = None) -
                 }
             }
             # Pre-fill if data exists and looks like a user ID (starts with U)
-            initial_val = ticket_data.get(field_id) or ticket_data.get(f"{field_id}_id", "")
-            if initial_val and initial_val.startswith('U'):
+            # Check custom_fields first (stored as field_id), then check the _id variant
+            initial_val = (
+                ticket_data.get(f"{field_id}_id", "") or  # Try field_id (from custom_fields)
+                ticket_data.get(field_id, "")              # Fall back to field itself
+            )
+            # Handle special mappings
+            if field_id == "requester" and not initial_val:
+                # Extract user ID from created_by if it looks like a user ID
+                created_by = ticket_data.get("created_by", "")
+                # If created_by starts with U, use it directly
+                if created_by.startswith('U'):
+                    initial_val = created_by
+            
+            if field_id == "assignee" and not initial_val:
+                # Extract user ID from assignee if available in custom fields
+                assignee_id = ticket_data.get("assignee_id", "")
+                if assignee_id.startswith('U'):
+                    initial_val = assignee_id
+            
+            # Only set initial_user if we have a valid Slack user ID
+            if initial_val and isinstance(initial_val, str) and initial_val.startswith('U'):
                 element["initial_user"] = initial_val
                 
         elif field_type == "select":
@@ -71,10 +90,20 @@ def build_modal_blocks(fields: List[Dict], ticket_data: Optional[Dict] = None) -
                 ]
             }
             # Pre-fill if data exists
-            if ticket_data.get(field_id) and ticket_data[field_id] in option_list:
+            current_value = ticket_data.get(field_id, "")
+            
+            # Case-insensitive matching for status and priority
+            matched_option = None
+            if current_value:
+                for opt in option_list:
+                    if opt.upper() == current_value.upper():
+                        matched_option = opt
+                        break
+            
+            if matched_option:
                 element["initial_option"] = {
-                    "text": {"type": "plain_text", "text": ticket_data[field_id]},
-                    "value": ticket_data[field_id]
+                    "text": {"type": "plain_text", "text": matched_option},
+                    "value": matched_option
                 }
                 
         elif field_type == "textarea":
@@ -89,8 +118,13 @@ def build_modal_blocks(fields: List[Dict], ticket_data: Optional[Dict] = None) -
                 }
             }
             # Pre-fill if data exists
-            if ticket_data.get(field_id):
-                element["initial_value"] = ticket_data[field_id]
+            # Special case: 'description' field maps to 'message' in ticket data
+            value = ticket_data.get(field_id, "")
+            if not value and field_id == "description":
+                value = ticket_data.get("message", "")
+            
+            if value:
+                element["initial_value"] = str(value)
                 
         elif field_type == "date":
             element = {
@@ -117,8 +151,9 @@ def build_modal_blocks(fields: List[Dict], ticket_data: Optional[Dict] = None) -
                 }
             }
             # Pre-fill if data exists
-            if ticket_data.get(field_id):
-                element["initial_value"] = ticket_data[field_id]
+            value = ticket_data.get(field_id, "")
+            if value:
+                element["initial_value"] = str(value)
         
         block["element"] = element
         blocks.append(block)

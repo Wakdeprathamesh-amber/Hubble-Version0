@@ -189,6 +189,66 @@ class SlackHandler:
                 except Exception as e:
                     logger.error(f"Error checking if internal channel: {str(e)}")
                 
+                # Handle thread replies in internal channels - forward to main channel
+                if is_internal_channel and thread_ts:
+                    logger.info(f"🧵 INTERNAL THREAD REPLY: Channel={channel_id}, User={user_id}, Thread={thread_ts}")
+                    
+                    # Find ticket by internal_message_ts matching the thread_ts
+                    tickets = self.ticket_service.get_all_tickets()
+                    matching_ticket = None
+                    
+                    for ticket in tickets:
+                        internal_msg_ts = ticket.get('internal_message_ts', '').strip()
+                        if internal_msg_ts == thread_ts:
+                            matching_ticket = ticket
+                            logger.info(f"✅ Found matching ticket #{ticket['ticket_id']} for internal thread {thread_ts}")
+                            break
+                    
+                    if matching_ticket:
+                        # Get user's name for display
+                        user_name = "Unknown"
+                        try:
+                            user_info = self.slack_app.client.users_info(user=user_id)
+                            if user_info["ok"]:
+                                user_name = user_info["user"].get("real_name", user_info["user"].get("name", "Unknown"))
+                        except Exception as e:
+                            logger.error(f"Error getting user name: {str(e)}")
+                        
+                        # Get the main channel thread_ts from the ticket
+                        main_channel_id = matching_ticket.get('channel_id', '')
+                        thread_link = matching_ticket.get('thread_link', '')
+                        
+                        # Extract thread_ts from thread_link
+                        main_thread_ts = None
+                        if thread_link and "/p" in thread_link:
+                            timestamp_part = thread_link.split("/p")[-1]
+                            if len(timestamp_part) >= 10:
+                                main_thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
+                        
+                        # If we couldn't get from thread_link, try thread_ts field
+                        if not main_thread_ts:
+                            main_thread_ts = matching_ticket.get('thread_ts', '')
+                        
+                        if main_channel_id and main_thread_ts:
+                            # Forward the reply to main channel thread
+                            try:
+                                forward_text = f"💬 *{user_name}* (from internal team):\n{text}"
+                                self.slack_app.client.chat_postMessage(
+                                    channel=main_channel_id,
+                                    thread_ts=main_thread_ts,
+                                    text=forward_text
+                                )
+                                logger.info(f"✅ Forwarded internal reply to main channel thread")
+                            except Exception as e:
+                                logger.error(f"❌ Error forwarding reply to main channel: {str(e)}", exc_info=True)
+                        else:
+                            logger.warning(f"⚠️ Could not determine main channel thread (channel={main_channel_id}, thread_ts={main_thread_ts})")
+                    else:
+                        logger.warning(f"⚠️ No ticket found for internal thread {thread_ts}")
+                    
+                    # Don't create a ticket - just return after handling the reply
+                    return
+                
                 # Check if this is a channel message (not DM, not group DM, not internal channel)
                 # The bot will work in any channel it's invited to
                 # Only create tickets for top-level messages (not thread replies)
@@ -330,7 +390,7 @@ We've recorded the details and notified the relevant team. You can track progres
                     except Exception as e:
                         logger.error(f"❌ Error posting to internal channel: {str(e)}", exc_info=True)
                 
-                # Handle thread replies (update first response)
+                # Handle thread replies (update first response + forward to internal channel)
                 elif thread_ts:
                     logger.info(f"🧵 THREAD REPLY: Channel={channel_id}, User={user_id}")
                     
@@ -374,6 +434,35 @@ We've recorded the details and notified the relevant team. You can track progres
                         logger.info(f"ℹ️ Ticket {ticket['ticket_id']} already has first response")
                     else:
                         logger.warning(f"⚠️ No ticket found for thread_ts: {thread_ts}")
+                    
+                    # Forward main channel thread reply to internal channel (if configured)
+                    if ticket:
+                        try:
+                            cfg_map = self.ticket_service.sheets_service.get_channel_config_map()
+                            cfg = cfg_map.get(channel_id, {})
+                            internal_channel_id = cfg.get('internal_channel_id', '').strip()
+                            internal_message_ts = ticket.get('internal_message_ts', '').strip()
+                            
+                            if internal_channel_id and internal_message_ts:
+                                # Get user's name for display
+                                user_name = "Unknown"
+                                try:
+                                    user_info = self.slack_app.client.users_info(user=user_id)
+                                    if user_info["ok"]:
+                                        user_name = user_info["user"].get("real_name", user_info["user"].get("name", "Unknown"))
+                                except Exception as e:
+                                    logger.error(f"Error getting user name: {str(e)}")
+                                
+                                # Forward to internal channel thread
+                                forward_text = f"💬 *{user_name}* (from main channel):\n{text}"
+                                self.slack_app.client.chat_postMessage(
+                                    channel=internal_channel_id,
+                                    thread_ts=internal_message_ts,
+                                    text=forward_text
+                                )
+                                logger.info(f"✅ Forwarded main channel reply to internal channel thread")
+                        except Exception as e:
+                            logger.error(f"❌ Error forwarding reply to internal channel: {str(e)}", exc_info=True)
                     
             except Exception as e:
                 logger.error(f"❌ Error handling message event: {str(e)}", exc_info=True)

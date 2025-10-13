@@ -150,8 +150,16 @@ def handle_view_edit_ticket_direct(payload):
         
         logger.info(f"🔧 Direct handling: View & Edit for ticket {ticket_id} by user {user_id} in channel {channel_id}")
 
-        # Check if user is admin (for edit permissions)
+        # Get ticket data first
+        ticket = slack_handler.ticket_service.get_ticket(ticket_id)
+        if not ticket:
+            logger.error(f"❌ Ticket {ticket_id} not found")
+            return jsonify({"error": "Ticket not found"}), 404
+        
+        # Check if user is admin or ticket creator
         is_admin = False
+        is_creator = False
+        
         try:
             cfg_map = slack_handler.ticket_service.sheets_service.get_channel_config_map()
             cfg = cfg_map.get(channel_id, {})
@@ -162,17 +170,17 @@ def handle_view_edit_ticket_direct(payload):
                 admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
             
             is_admin = user_id in admin_ids
+            
+            # Check if user is the ticket creator
+            ticket_creator_id = ticket.get('created_by', '')
+            is_creator = (user_id == ticket_creator_id)
         except Exception:
             admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
             is_admin = user_id in admin_ids
+            ticket_creator_id = ticket.get('created_by', '')
+            is_creator = (user_id == ticket_creator_id)
         
-        logger.info(f"🔍 User {user_id} is_admin: {is_admin}")
-        
-        # Get ticket data
-        ticket = slack_handler.ticket_service.get_ticket(ticket_id)
-        if not ticket:
-            logger.error(f"❌ Ticket {ticket_id} not found")
-            return jsonify({"error": "Ticket not found"}), 404
+        logger.info(f"🔍 User {user_id} is_admin: {is_admin}, is_creator: {is_creator}")
         
         # Get modal template for this channel
         cfg_map = slack_handler.ticket_service.sheets_service.get_channel_config_map()
@@ -185,12 +193,15 @@ def handle_view_edit_ticket_direct(payload):
             logger.error(f"No fields found for template '{template_key}'")
             return jsonify({"error": "Modal template not found"}), 500
         
-        # Build modal blocks (different for admins vs non-admins)
+        # Build modal blocks based on permissions
         if is_admin:
-            # Editable modal with input blocks
+            # Admins get fully editable modal
             modal_blocks = build_modal_blocks(fields, ticket)
+        elif is_creator:
+            # Creators get editable modal but with status field locked
+            modal_blocks = build_modal_blocks(fields, ticket, lock_status=True)
         else:
-            # View-only modal with section blocks
+            # Others get view-only modal
             modal_blocks = build_view_only_blocks(fields, ticket)
         
         # Store metadata
@@ -206,20 +217,20 @@ def handle_view_edit_ticket_direct(payload):
             "callback_id": "ticket_edit_modal",
             "title": {
                 "type": "plain_text",
-                "text": f"View Ticket #{ticket_id}" if not is_admin else f"Edit Ticket #{ticket_id}",
+                "text": f"Edit Ticket #{ticket_id}" if (is_admin or is_creator) else f"View Ticket #{ticket_id}",
                 "emoji": True
             },
             "close": {
                 "type": "plain_text",
-                "text": "Close" if not is_admin else "Cancel",
+                "text": "Cancel" if (is_admin or is_creator) else "Close",
                 "emoji": True
             },
             "blocks": modal_blocks,
             "private_metadata": metadata
         }
         
-        # Only add submit button for admins (makes it editable)
-        if is_admin:
+        # Add submit button for admins and creators (makes it editable)
+        if is_admin or is_creator:
             modal_view["submit"] = {
                 "type": "plain_text",
                 "text": "Update",
@@ -367,8 +378,10 @@ def handle_internal_view_edit_direct(payload):
         cfg = cfg_map.get(original_channel_id, {})
         template_key = cfg.get('modal_template_key', 'tech_default')
         
-        # Check if user is admin (anyone can view, only admins can edit)
+        # Check if user is admin or ticket creator
         is_admin = False
+        is_creator = False
+        
         try:
             admin_ids_csv = cfg.get('admin_user_ids', '')
             if admin_ids_csv:
@@ -377,21 +390,30 @@ def handle_internal_view_edit_direct(payload):
                 admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
             
             is_admin = user_id in admin_ids
+            
+            # Check if user is the ticket creator
+            ticket_creator_id = ticket.get('created_by', '')
+            is_creator = (user_id == ticket_creator_id)
         except Exception:
             is_admin = False
+            ticket_creator_id = ticket.get('created_by', '')
+            is_creator = (user_id == ticket_creator_id)
         
-        logger.info(f"🔍 User {user_id} is_admin: {is_admin}")
+        logger.info(f"🔍 User {user_id} is_admin: {is_admin}, is_creator: {is_creator}")
         
         fields = ticket_service.sheets_service.get_modal_template(template_key)
         if not fields:
             return jsonify({"error": "Modal template not found"}), 500
         
-        # Build modal blocks (different for admins vs non-admins)
+        # Build modal blocks based on permissions
         if is_admin:
-            # Editable modal with input blocks
+            # Admins get fully editable modal
             modal_blocks = build_modal_blocks(fields, ticket)
+        elif is_creator:
+            # Creators get editable modal but with status field locked
+            modal_blocks = build_modal_blocks(fields, ticket, lock_status=True)
         else:
-            # View-only modal with section blocks
+            # Others get view-only modal
             modal_blocks = build_view_only_blocks(fields, ticket)
         metadata = json.dumps({
             'ticket_id': ticket_id,
@@ -405,20 +427,20 @@ def handle_internal_view_edit_direct(payload):
             "callback_id": "ticket_edit_modal",
             "title": {
                 "type": "plain_text",
-                "text": f"View Ticket #{ticket_id}" if not is_admin else f"Edit Ticket #{ticket_id}",
+                "text": f"Edit Ticket #{ticket_id}" if (is_admin or is_creator) else f"View Ticket #{ticket_id}",
                 "emoji": True
             },
             "close": {
                 "type": "plain_text",
-                "text": "Close" if not is_admin else "Cancel",
+                "text": "Cancel" if (is_admin or is_creator) else "Close",
                 "emoji": True
             },
             "blocks": modal_blocks,
             "private_metadata": metadata
         }
         
-        # Only add submit button for admins
-        if is_admin:
+        # Add submit button for admins and creators
+        if is_admin or is_creator:
             modal_view["submit"] = {
                 "type": "plain_text",
                 "text": "Update",

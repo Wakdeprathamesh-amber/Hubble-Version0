@@ -4,13 +4,14 @@ Modal builder for dynamic Slack modals based on field templates.
 from typing import List, Dict, Optional
 
 
-def build_modal_blocks(fields: List[Dict], ticket_data: Optional[Dict] = None) -> List[Dict]:
+def build_modal_blocks(fields: List[Dict], ticket_data: Optional[Dict] = None, lock_status: bool = False) -> List[Dict]:
     """
     Build Slack modal blocks from field definitions.
     
     Args:
         fields: List of field definitions from Modal Templates sheet
         ticket_data: Optional existing ticket data for pre-filling fields
+        lock_status: If True, status field will be view-only (for ticket creators)
         
     Returns:
         List of Slack Block Kit blocks
@@ -24,6 +25,18 @@ def build_modal_blocks(fields: List[Dict], ticket_data: Optional[Dict] = None) -
         field_type = field['field_type']
         required = field['required']
         options = field['options']
+        
+        # If this is the status field and we need to lock it, make it view-only
+        if field_id == 'status' and lock_status:
+            current_status = ticket_data.get('status', 'Open')
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{field_label}:* {current_status}\n_Status can only be changed by admins_"
+                }
+            })
+            continue  # Skip creating an editable input for status
         
         block = {
             "type": "input",

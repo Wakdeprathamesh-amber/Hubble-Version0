@@ -637,7 +637,20 @@ def handle_modal_submission_direct(payload):
         
         logger.info(f"🔧 Submitting ticket #{ticket_id}")
         
-        # Permission check - only admins can submit
+        # Get the ticket to check creator
+        ticket = ticket_service.get_ticket(ticket_id)
+        if not ticket:
+            return jsonify({
+                "response_action": "errors",
+                "errors": {
+                    "description": "Ticket not found. Please try again."
+                }
+            })
+        
+        # Permission check - admins and ticket creators can submit
+        is_admin = False
+        is_creator = False
+        
         try:
             cfg_map = ticket_service.sheets_service.get_channel_config_map()
             cfg = cfg_map.get(channel_id, {})
@@ -647,16 +660,25 @@ def handle_modal_submission_direct(payload):
             else:
                 admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
             
-            if user_id not in admin_ids:
-                logger.warning(f"⚠️ Non-admin {user_id} tried to submit modal")
+            is_admin = user_id in admin_ids
+            
+            # Check if user is the ticket creator
+            ticket_creator_id = ticket.get('created_by', '')
+            is_creator = (user_id == ticket_creator_id)
+            
+            logger.info(f"🔧 Submission permission: user_id={user_id}, is_admin={is_admin}, is_creator={is_creator}")
+            
+            if not is_admin and not is_creator:
+                logger.warning(f"⚠️ User {user_id} (not admin or creator) tried to submit modal")
                 return jsonify({
                     "response_action": "errors",
                     "errors": {
-                        "description": "Only admins can update tickets."
+                        "description": "Only admins and ticket creators can update tickets."
                     }
                 })
-        except Exception:
-            pass  # If check fails, allow (fail open)
+        except Exception as e:
+            logger.error(f"Error checking permissions: {str(e)}")
+            # If check fails, continue (fail open)
         
         # Get template fields
         fields = ticket_service.sheets_service.get_modal_template(template_key)
@@ -700,7 +722,14 @@ def handle_modal_submission_direct(payload):
         requester = f"@{requester_name}" if requester_name else ''
         assignee = f"@{assignee_name}" if assignee_name else ''
         
-        status = core_data.get('status', 'Open')
+        # For creators, preserve existing status (they can't change it)
+        # For admins, use submitted status
+        if is_creator and not is_admin:
+            status = ticket.get('status', 'Open')  # Keep current status
+            logger.info(f"🔧 Creator submission - preserving status: {status}")
+        else:
+            status = core_data.get('status', ticket.get('status', 'Open'))
+        
         priority = core_data.get('priority', 'MEDIUM')
         description = core_data.get('description', '')
         

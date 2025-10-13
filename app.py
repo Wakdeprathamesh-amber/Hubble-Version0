@@ -173,11 +173,13 @@ def handle_view_edit_ticket_direct(payload):
             
             # Check if user is the ticket creator
             ticket_creator_id = ticket.get('created_by', '')
+            logger.info(f"🔍 Creator check: user_id={user_id}, ticket_creator_id='{ticket_creator_id}', ticket keys={list(ticket.keys())[:10]}")
             is_creator = (user_id == ticket_creator_id)
         except Exception:
             admin_ids = [u.strip() for u in os.environ.get('ADMIN_USER_IDS', '').split(',') if u.strip()]
             is_admin = user_id in admin_ids
             ticket_creator_id = ticket.get('created_by', '')
+            logger.info(f"🔍 Creator check (exception path): user_id={user_id}, ticket_creator_id='{ticket_creator_id}'")
             is_creator = (user_id == ticket_creator_id)
         
         logger.info(f"🔍 User {user_id} is_admin: {is_admin}, is_creator: {is_creator}")
@@ -393,10 +395,12 @@ def handle_internal_view_edit_direct(payload):
             
             # Check if user is the ticket creator
             ticket_creator_id = ticket.get('created_by', '')
+            logger.info(f"🔍 Internal creator check: user_id={user_id}, ticket_creator_id='{ticket_creator_id}'")
             is_creator = (user_id == ticket_creator_id)
         except Exception:
             is_admin = False
             ticket_creator_id = ticket.get('created_by', '')
+            logger.info(f"🔍 Internal creator check (exception): user_id={user_id}, ticket_creator_id='{ticket_creator_id}'")
             is_creator = (user_id == ticket_creator_id)
         
         logger.info(f"🔍 User {user_id} is_admin: {is_admin}, is_creator: {is_creator}")

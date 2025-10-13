@@ -263,6 +263,20 @@ class SlackHandler:
                 ):
                     logger.info(f"🎫 CREATING TICKET: Channel={channel_id}, User={user_id}, thread_ts={thread_ts}, ts={ts}")
                     
+                    # Check if a ticket already exists for this message timestamp (prevent duplicates)
+                    existing_tickets = self.ticket_service.get_all_tickets()
+                    ticket_exists = False
+                    for existing_ticket in existing_tickets:
+                        # Check if thread_ts matches this message's ts
+                        existing_thread_ts = existing_ticket.get('thread_ts', '')
+                        if existing_thread_ts == ts or existing_thread_ts == ts.replace('.', ''):
+                            ticket_exists = True
+                            logger.warning(f"⚠️ Ticket already exists for message ts={ts}, skipping duplicate creation")
+                            break
+                    
+                    if ticket_exists:
+                        return  # Skip duplicate ticket creation
+                    
                     # Get user's real name from Slack
                     user_name = f"@{user_id}"  # Default fallback
                     try:
@@ -424,11 +438,8 @@ We've recorded the details and notified the relevant team. You can track progres
                         )
                         
                         if success:
-                            # Notify in thread
-                            say(
-                                text=f"✅ First response recorded for Ticket #{ticket['ticket_id']}",
-                                thread_ts=thread_ts
-                            )
+                            logger.info(f"✅ First response recorded for Ticket #{ticket['ticket_id']}")
+                            # Don't show message in thread - just log it
                         else:
                             logger.error(f"❌ Failed to update first response for ticket {ticket['ticket_id']}")
                     elif ticket and ticket.get("first_response"):

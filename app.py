@@ -292,13 +292,21 @@ def handle_close_ticket_direct(payload):
         success = slack_handler.ticket_service.update_ticket_status(ticket_id, "Closed")
         
         if success:
-            # Silent close - no message
             from slack_sdk import WebClient
             from internal_channel_handler import update_internal_channel_message
             
             client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
             
-            logger.info(f"✅ Ticket closed silently (no thread message)")
+            # Post status change notification to thread
+            try:
+                client.chat_postMessage(
+                    channel=channel_id,
+                    thread_ts=thread_ts,
+                    text=f"🔴 *Ticket #{ticket_id}* status changed to *Closed* by <@{user_id}>"
+                )
+                logger.info(f"✅ Posted status change notification to thread")
+            except Exception as e:
+                logger.error(f"Error posting status change to thread: {str(e)}")
             
             # Update internal channel if configured
             try:
@@ -548,8 +556,22 @@ def handle_internal_change_status_direct(payload):
                         fields=fields or []
                     )
                 
-                # Silent update - no message to thread
-                logger.info(f"✅ Status changed silently (no thread message)")
+                # Post status change notification to main channel thread
+                thread_link = updated_ticket.get('thread_link', '')
+                if thread_link and '/p' in thread_link:
+                    timestamp_part = thread_link.split('/p')[-1]
+                    if len(timestamp_part) >= 10:
+                        main_thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
+                        try:
+                            status_emoji = "🔴" if new_status == "Closed" else "🟢"
+                            client.chat_postMessage(
+                                channel=original_channel_id,
+                                thread_ts=main_thread_ts,
+                                text=f"{status_emoji} *Ticket #{ticket_id}* status changed to *{new_status}* by <@{user_id}>"
+                            )
+                            logger.info(f"✅ Posted status change notification to main channel thread")
+                        except Exception as e:
+                            logger.error(f"Error posting status change to main thread: {str(e)}")
             
             logger.info(f"✅ Changed ticket {ticket_id} status to {new_status}")
             return jsonify({"ok": True})

@@ -252,6 +252,7 @@ class SlackHandler:
                 # Check if this is a channel message (not DM, not group DM, not internal channel)
                 # The bot will work in any channel it's invited to
                 # Only create tickets for top-level messages (not thread replies)
+                # Note: thread_ts is only present for replies; original messages don't have it
                 if (
                     not channel_id.startswith('D')
                     and not channel_id.startswith('G')
@@ -260,7 +261,7 @@ class SlackHandler:
                     and text
                     and not thread_ts  # ensure this is not a reply in a thread
                 ):
-                    logger.info(f"🎫 CREATING TICKET: Channel={channel_id}, User={user_id}")
+                    logger.info(f"🎫 CREATING TICKET: Channel={channel_id}, User={user_id}, thread_ts={thread_ts}, ts={ts}")
                     
                     # Get user's real name from Slack
                     user_name = f"@{user_id}"  # Default fallback

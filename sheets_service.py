@@ -404,13 +404,19 @@ class SheetsService:
                         except Exception:
                             custom_fields = {}
                     
+                    # Extract user IDs from custom_fields, fallback to display names for backwards compatibility
+                    creator_id = custom_fields.get('requester_id', row[2])  # Use requester_id from custom_fields
+                    assignee_id = custom_fields.get('assignee_id', row[5]) if row[5].startswith('U') else row[5]
+                    
                     ticket = {
                         'ticket_id': ticket_id,
                         'thread_link': row[1],
-                        'created_by': row[2],  # This will be the display name
+                        'created_by': creator_id,  # User ID for permission checks
+                        'requester_name': row[2],  # Display name for showing
                         'status': row[3],
                         'priority': row[4],
-                        'assignee': row[5],  # This will be the display name
+                        'assignee': row[5],  # Display name for showing
+                        'assignee_id': assignee_id,  # User ID for permission checks
                         'created_at': row[6],
                         'first_response': row[7],
                         'resolved_at': row[8],

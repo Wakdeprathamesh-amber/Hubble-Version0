@@ -205,6 +205,14 @@ class SlackHandler:
                             break
                     
                     if matching_ticket:
+                        # Check if message is locked (starts with 🔒 or :lock:)
+                        is_locked = text.strip().startswith('🔒') or text.strip().startswith(':lock:')
+                        
+                        if is_locked:
+                            logger.info(f"🔒 Locked message detected - skipping sync to main channel")
+                            # Don't forward locked messages
+                            return
+                        
                         # Get user's name for display
                         user_name = "Unknown"
                         try:
@@ -456,23 +464,30 @@ We've recorded the details and notified the relevant team. You can track progres
                             internal_message_ts = ticket.get('internal_message_ts', '').strip()
                             
                             if internal_channel_id and internal_message_ts:
-                                # Get user's name for display
-                                user_name = "Unknown"
-                                try:
-                                    user_info = self.slack_app.client.users_info(user=user_id)
-                                    if user_info["ok"]:
-                                        user_name = user_info["user"].get("real_name", user_info["user"].get("name", "Unknown"))
-                                except Exception as e:
-                                    logger.error(f"Error getting user name: {str(e)}")
+                                # Check if message is locked (starts with 🔒 or :lock:)
+                                is_locked = text.strip().startswith('🔒') or text.strip().startswith(':lock:')
                                 
-                                # Forward to internal channel thread
-                                forward_text = f"💬 *{user_name}* (from main channel):\n{text}"
-                                self.slack_app.client.chat_postMessage(
-                                    channel=internal_channel_id,
-                                    thread_ts=internal_message_ts,
-                                    text=forward_text
-                                )
-                                logger.info(f"✅ Forwarded main channel reply to internal channel thread")
+                                if is_locked:
+                                    logger.info(f"🔒 Locked message detected - skipping sync to internal channel")
+                                    # Don't forward locked messages
+                                else:
+                                    # Get user's name for display
+                                    user_name = "Unknown"
+                                    try:
+                                        user_info = self.slack_app.client.users_info(user=user_id)
+                                        if user_info["ok"]:
+                                            user_name = user_info["user"].get("real_name", user_info["user"].get("name", "Unknown"))
+                                    except Exception as e:
+                                        logger.error(f"Error getting user name: {str(e)}")
+                                    
+                                    # Forward to internal channel thread
+                                    forward_text = f"💬 *{user_name}* (from main channel):\n{text}"
+                                    self.slack_app.client.chat_postMessage(
+                                        channel=internal_channel_id,
+                                        thread_ts=internal_message_ts,
+                                        text=forward_text
+                                    )
+                                    logger.info(f"✅ Forwarded main channel reply to internal channel thread")
                         except Exception as e:
                             logger.error(f"❌ Error forwarding reply to internal channel: {str(e)}", exc_info=True)
                     

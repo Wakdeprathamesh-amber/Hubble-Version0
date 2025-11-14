@@ -581,6 +581,27 @@ def handle_internal_change_status_direct(payload):
                         ticket=updated_ticket,
                         fields=fields or []
                     )
+                    
+                    # Post status change notification to internal channel thread
+                    try:
+                        status_emoji = "🔴" if new_status == "Closed" else "🟢"
+                        # Get user's name for display
+                        user_name = "Unknown"
+                        try:
+                            user_info = client.users_info(user=user_id)
+                            if user_info["ok"]:
+                                user_name = user_info["user"].get("real_name", user_info["user"].get("name", "Unknown"))
+                        except Exception as e:
+                            logger.error(f"Error getting user name: {str(e)}")
+                        
+                        client.chat_postMessage(
+                            channel=channel_id,
+                            thread_ts=internal_message_ts,
+                            text=f"{status_emoji} *Ticket #{ticket_id}* status changed to *{new_status}* by <@{user_id}> ({user_name})"
+                        )
+                        logger.info(f"✅ Posted status change notification to internal channel thread")
+                    except Exception as e:
+                        logger.error(f"Error posting status change to internal thread: {str(e)}")
                 
                 # Post status change notification to main channel thread
                 thread_link = updated_ticket.get('thread_link', '')

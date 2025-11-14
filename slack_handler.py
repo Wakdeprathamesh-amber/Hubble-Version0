@@ -875,20 +875,35 @@ We've recorded the details and notified the relevant team. You can track progres
                                 ticket=updated_ticket,
                                 fields=fields or []
                             )
+                            
+                            # Post status change notification to internal channel thread
+                            try:
+                                status_emoji = "🔴" if new_status == "Closed" else "🟢"
+                                # Get user's name for display
+                                user_name = self._get_user_name(client, user_id)
+                                client.chat_postMessage(
+                                    channel=channel_id,
+                                    thread_ts=internal_message_ts,
+                                    text=f"{status_emoji} *Ticket #{ticket_id}* status changed to *{new_status}* by <@{user_id}> ({user_name})"
+                                )
+                                logger.info(f"✅ Posted status change notification to internal channel thread")
+                            except Exception as e:
+                                logger.error(f"Error posting status change to internal thread: {str(e)}")
                         
-                        # Also post to original thread
+                        # Also post to original thread (main channel)
                         thread_link = updated_ticket.get("thread_link", "")
                         if thread_link and "/p" in thread_link:
                             timestamp_part = thread_link.split("/p")[-1]
                             if len(timestamp_part) >= 10:
                                 thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
                                 try:
-                                    status_emoji = "✅" if new_status == "Closed" else "🔵"
+                                    status_emoji = "🔴" if new_status == "Closed" else "🟢"
                                     client.chat_postMessage(
                                         channel=original_channel_id,
                                         thread_ts=thread_ts,
-                                        text=f"{status_emoji} Ticket #{ticket_id} status changed to *{new_status}* by <@{user_id}>"
+                                        text=f"{status_emoji} *Ticket #{ticket_id}* status changed to *{new_status}* by <@{user_id}>"
                                     )
+                                    logger.info(f"✅ Posted status change notification to main channel thread")
                                 except Exception as e:
                                     logger.error(f"Error posting to thread: {str(e)}")
                     

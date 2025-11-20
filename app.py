@@ -522,9 +522,33 @@ def handle_internal_assign_me_direct(payload):
                         ticket=ticket,
                         fields=fields or []
                     )
+                    
+                    # Post assignee change notification to internal channel thread
+                    try:
+                        client.chat_postMessage(
+                            channel=channel_id,
+                            thread_ts=internal_message_ts,
+                            text=f"👤 *Ticket #{ticket_id}* assigned to <@{user_id}> ({user_name})"
+                        )
+                        logger.info(f"✅ Posted assignee change notification to internal channel thread")
+                    except Exception as e:
+                        logger.error(f"Error posting assignee change to internal thread: {str(e)}")
                 
-                # Silent update - no message to thread
-                logger.info(f"✅ Ticket assigned silently (no thread message)")
+                # Also post to main channel thread
+                thread_link = ticket.get('thread_link', '')
+                if thread_link and '/p' in thread_link:
+                    timestamp_part = thread_link.split('/p')[-1]
+                    if len(timestamp_part) >= 10:
+                        main_thread_ts = f"{timestamp_part[:10]}.{timestamp_part[10:]}"
+                        try:
+                            client.chat_postMessage(
+                                channel=original_channel_id,
+                                thread_ts=main_thread_ts,
+                                text=f"👤 *Ticket #{ticket_id}* assigned to <@{user_id}> ({user_name})"
+                            )
+                            logger.info(f"✅ Posted assignee change notification to main channel thread")
+                        except Exception as e:
+                            logger.error(f"Error posting assignee change to main thread: {str(e)}")
             
             logger.info(f"✅ Assigned ticket {ticket_id} to {user_name}")
             return jsonify({"ok": True})

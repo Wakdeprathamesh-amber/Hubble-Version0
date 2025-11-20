@@ -205,6 +205,41 @@ class SlackHandler:
                             break
                     
                     if matching_ticket:
+                        # Auto-reopen closed tickets when a message is sent in the thread
+                        if matching_ticket.get('status', 'Open') == 'Closed':
+                            logger.info(f"🔄 Auto-reopening closed ticket {matching_ticket['ticket_id']} due to new message in internal thread")
+                            reopen_success = self.ticket_service.update_ticket_status(matching_ticket['ticket_id'], 'Open')
+                            if reopen_success:
+                                # Refresh ticket data after status change
+                                matching_ticket = self.ticket_service.get_ticket(matching_ticket['ticket_id'])
+                                
+                                # Update internal channel card
+                                try:
+                                    cfg_map = self.ticket_service.sheets_service.get_channel_config_map()
+                                    original_channel_id = matching_ticket.get('channel_id', '')
+                                    cfg = cfg_map.get(original_channel_id, {})
+                                    template_key = cfg.get('modal_template_key', 'tech_default')
+                                    fields = self.ticket_service.sheets_service.get_modal_template(template_key)
+                                    
+                                    from internal_channel_handler import update_internal_channel_message
+                                    update_internal_channel_message(
+                                        client=self.slack_app.client,
+                                        internal_channel_id=channel_id,
+                                        message_ts=thread_ts,
+                                        ticket=matching_ticket,
+                                        fields=fields or []
+                                    )
+                                    
+                                    # Post reopen notification to internal thread
+                                    self.slack_app.client.chat_postMessage(
+                                        channel=channel_id,
+                                        thread_ts=thread_ts,
+                                        text=f"🟢 *Ticket #{matching_ticket['ticket_id']}* automatically reopened due to new message"
+                                    )
+                                    logger.info(f"✅ Ticket {matching_ticket['ticket_id']} automatically reopened and card updated")
+                                except Exception as e:
+                                    logger.error(f"Error updating internal channel after reopen: {str(e)}")
+                        
                         # Check if message is locked (starts with 🔒 or :lock:)
                         is_locked = text.strip().startswith('🔒') or text.strip().startswith(':lock:')
                         
@@ -435,6 +470,47 @@ We've recorded the details and notified the relevant team. You can track progres
                             if thread_link and thread_ts.replace('.', '') in thread_link:
                                 ticket = t
                                 break
+                    
+                    # Auto-reopen closed tickets when a message is sent in the thread
+                    if ticket and ticket.get('status', 'Open') == 'Closed':
+                        logger.info(f"🔄 Auto-reopening closed ticket {ticket['ticket_id']} due to new message in thread")
+                        reopen_success = self.ticket_service.update_ticket_status(ticket['ticket_id'], 'Open')
+                        if reopen_success:
+                            # Refresh ticket data after status change
+                            ticket = self.ticket_service.get_ticket(ticket['ticket_id'])
+                            logger.info(f"✅ Ticket {ticket['ticket_id']} automatically reopened")
+                            
+                            # Update internal channel card if configured
+                            try:
+                                cfg_map = self.ticket_service.sheets_service.get_channel_config_map()
+                                cfg = cfg_map.get(channel_id, {})
+                                internal_channel_id = cfg.get('internal_channel_id', '').strip()
+                                internal_message_ts = ticket.get('internal_message_ts', '').strip()
+                                
+                                if internal_channel_id and internal_message_ts:
+                                    template_key = cfg.get('modal_template_key', 'tech_default')
+                                    fields = self.ticket_service.sheets_service.get_modal_template(template_key)
+                                    
+                                    from internal_channel_handler import update_internal_channel_message
+                                    update_internal_channel_message(
+                                        client=self.slack_app.client,
+                                        internal_channel_id=internal_channel_id,
+                                        message_ts=internal_message_ts,
+                                        ticket=ticket,
+                                        fields=fields or []
+                                    )
+                                    logger.info(f"✅ Updated internal channel card after auto-reopen")
+                            except Exception as e:
+                                logger.error(f"Error updating internal channel after reopen: {str(e)}")
+                            
+                            # Post reopen notification to thread
+                            try:
+                                say(
+                                    text=f"🟢 *Ticket #{ticket['ticket_id']}* automatically reopened due to new message",
+                                    thread_ts=thread_ts
+                                )
+                            except Exception as e:
+                                logger.error(f"Error posting reopen notification: {str(e)}")
                     
                     if ticket and not ticket.get("first_response"):
                         logger.info(f"🎯 FIRST RESPONSE: Updating ticket {ticket['ticket_id']} with first response")
@@ -808,8 +884,19 @@ We've recorded the details and notified the relevant team. You can track progres
                                 ticket=ticket,
                                 fields=fields or []
                             )
+                            
+                            # Post assignee change notification to internal channel thread
+                            try:
+                                client.chat_postMessage(
+                                    channel=channel_id,
+                                    thread_ts=internal_message_ts,
+                                    text=f"👤 *Ticket #{ticket_id}* assigned to <@{user_id}> ({user_name})"
+                                )
+                                logger.info(f"✅ Posted assignee change notification to internal channel thread")
+                            except Exception as e:
+                                logger.error(f"Error posting assignee change to internal thread: {str(e)}")
                         
-                        # Also post to original thread
+                        # Also post to original thread (main channel)
                         thread_link = ticket.get("thread_link", "")
                         if thread_link and "/p" in thread_link:
                             timestamp_part = thread_link.split("/p")[-1]
@@ -819,8 +906,9 @@ We've recorded the details and notified the relevant team. You can track progres
                                     client.chat_postMessage(
                                         channel=original_channel_id,
                                         thread_ts=thread_ts,
-                                        text=f"👤 Ticket #{ticket_id} assigned to <@{user_id}> ({user_name})"
+                                        text=f"👤 *Ticket #{ticket_id}* assigned to <@{user_id}> ({user_name})"
                                     )
+                                    logger.info(f"✅ Posted assignee change notification to main channel thread")
                                 except Exception as e:
                                     logger.error(f"Error posting to thread: {str(e)}")
                     

@@ -203,7 +203,7 @@ def format_ticket_card(ticket: Dict, fields: List[Dict], include_buttons: bool =
                 "type": "button",
                 "text": {
                     "type": "plain_text",
-                    "text": "🔄 Change Status",
+                    "text": f"🔄 {status}",  # Show current status (Open or Closed)
                     "emoji": True
                 },
                 "action_id": "internal_change_status",

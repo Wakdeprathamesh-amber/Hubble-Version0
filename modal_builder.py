@@ -224,7 +224,12 @@ def extract_modal_values(values: Dict, fields: List[Dict]) -> Dict[str, str]:
         else:  # text or textarea
             action_id = f"{field_id}_input"
             if action_id in block_values:
-                extracted[field_id] = block_values[action_id].get("value", "")
+                value = block_values[action_id].get("value", "")
+                # Always extract, even if empty (for required fields like description)
+                extracted[field_id] = value if value is not None else ""
+            elif field_type == "textarea":
+                # For textarea fields, if not found, use empty string
+                extracted[field_id] = ""
     
     return extracted
 

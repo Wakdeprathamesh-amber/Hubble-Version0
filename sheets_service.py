@@ -866,12 +866,15 @@ class SheetsService:
             bool: True if update was successful, False otherwise
         """
         try:
+            # Ensure description is a string (not None)
+            description = description or ""
+            
             print(f"🔄 Updating ticket {ticket_id} from modal...")
             print(f"   Requester: {requester}")
             print(f"   Status: {status}")
             print(f"   Assignee: {assignee}")
             print(f"   Priority: {priority}")
-            print(f"   Description: {description[:50]}...")
+            print(f"   Description: {description[:50] if description else '(empty)'}...")
             
             # Get all rows to find the ticket
             range_name = f"{self.sheet_name}!A2:K"

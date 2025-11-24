@@ -756,9 +756,11 @@ def handle_modal_submission_direct(payload):
         
         # Extract submitted values
         values = view["state"]["values"]
-        submitted_data = extract_modal_values(values, fields)
+        logger.info(f"🔧 Raw modal values keys: {list(values.keys())}")
         
-        logger.info(f"🔧 Extracted {len(submitted_data)} fields")
+        submitted_data = extract_modal_values(values, fields)
+        logger.info(f"🔧 Extracted {len(submitted_data)} fields: {list(submitted_data.keys())}")
+        logger.info(f"🔧 Extracted description value: '{submitted_data.get('description', 'NOT FOUND')}'")
         
         # Separate core fields from custom fields
         core_field_ids = {'requester', 'status', 'assignee', 'priority', 'description'}
@@ -770,6 +772,11 @@ def handle_modal_submission_direct(payload):
                 core_data[field_id] = value
             else:
                 custom_data[field_id] = value
+        
+        # Ensure description is in core_data even if empty (for textarea fields)
+        if 'description' not in core_data and 'description' in [f['field_id'] for f in fields]:
+            core_data['description'] = ''
+            logger.info(f"🔧 Added empty description to core_data")
         
         # Create Slack client
         client = WebClient(token=os.environ.get('SLACK_BOT_TOKEN'))
@@ -802,7 +809,8 @@ def handle_modal_submission_direct(payload):
             status = core_data.get('status', ticket.get('status', 'Open'))
         
         priority = core_data.get('priority', 'MEDIUM')
-        description = core_data.get('description', '')
+        description = core_data.get('description', '') or ''  # Ensure it's always a string, not None
+        logger.info(f"🔧 Description value: '{description}' (type: {type(description).__name__}, length: {len(description)})")
         
         # Store user IDs in custom_data
         if requester_id:
@@ -893,10 +901,29 @@ def handle_modal_submission_direct(payload):
             
     except Exception as e:
         logger.error(f"❌ Error in modal submission: {str(e)}", exc_info=True)
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        
+        # Use a field-specific error if description field exists, otherwise use a generic error
+        error_field = "description"
+        error_message = f"An error occurred: {str(e)}. Please try again."
+        
+        # Check if description field exists in the form
+        try:
+            metadata = json.loads(payload['view']["private_metadata"])
+            template_key = metadata.get('template_key', '')
+            fields = ticket_service.sheets_service.get_modal_template(template_key)
+            if not any(f.get('field_id') == 'description' for f in fields):
+                # If description field doesn't exist, use first field as error target
+                if fields:
+                    error_field = fields[0].get('field_id', 'description')
+        except:
+            pass
+        
         return jsonify({
             "response_action": "errors",
             "errors": {
-                "description": "An error occurred. Please try again."
+                error_field: error_message
             }
         })
 

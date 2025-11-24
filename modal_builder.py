@@ -208,18 +208,20 @@ def extract_modal_values(values: Dict, fields: List[Dict]) -> Dict[str, str]:
         if field_type == "user_select":
             action_id = f"{field_id}_select"
             if action_id in block_values:
-                extracted[field_id] = block_values[action_id].get("selected_user", "")
+                selected_user = block_values[action_id].get("selected_user") or ""
+                extracted[field_id] = selected_user
                 
         elif field_type == "select":
             action_id = f"{field_id}_select"
             if action_id in block_values:
-                selected = block_values[action_id].get("selected_option", {})
-                extracted[field_id] = selected.get("value", "")
+                selected = block_values[action_id].get("selected_option") or {}
+                extracted[field_id] = selected.get("value", "") if selected else ""
                 
         elif field_type == "date":
             action_id = f"{field_id}_date"
             if action_id in block_values:
-                extracted[field_id] = block_values[action_id].get("selected_date", "")
+                selected_date = block_values[action_id].get("selected_date") or ""
+                extracted[field_id] = selected_date
                 
         else:  # text or textarea
             action_id = f"{field_id}_input"

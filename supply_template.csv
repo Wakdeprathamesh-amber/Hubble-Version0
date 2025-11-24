@@ -1,0 +1,11 @@
+Template Key,Field ID,Field Label,Field Type,Required,Options,Order
+supply,requester,Requester,user_select,Yes,,1
+supply,assignee,Assignee,user_select,No,,2
+supply,priority,Priority,select,No,"CRITICAL,HIGH,MEDIUM,LOW",3
+supply,status,Status,select,Yes,"Open,Closed",4
+supply,supply_country,Supply Country,text,No,,5
+supply,supply_city,Supply City,text,No,,6
+supply,description,Description,textarea,Yes,,7
+supply,category,Category (Supply),text,No,,8
+supply,pmg,PMG,text,No,,9
+

@@ -806,18 +806,40 @@ We've recorded the details and notified the relevant team. You can track progres
                 
                 # Build modal
                 modal_blocks = build_modal_blocks(fields, ticket)
+                
+                # Add channel context block for supply template
+                if template_key == 'supply':
+                    channel_context = {
+                        "type": "context",
+                        "elements": [
+                            {
+                                "type": "mrkdwn",
+                                "text": f"*Channel:* {cfg.get('channel_name', 'supply')}"
+                            }
+                        ]
+                    }
+                    modal_blocks.insert(0, channel_context)
+                
                 metadata = json.dumps({
                     'ticket_id': ticket_id,
                     'template_key': template_key,
                     'channel_id': original_channel_id
                 })
                 
+                # Get custom modal title based on template
+                template_titles = {
+                    'supply': 'Form: Supply Team',
+                    'tech_default': 'Ticket',
+                }
+                base_title = template_titles.get(template_key, 'Ticket')
+                modal_title = f"{base_title} - Edit #{ticket_id}"
+                
                 modal = {
                     "type": "modal",
                     "callback_id": "ticket_edit_modal",
                     "title": {
                         "type": "plain_text",
-                        "text": f"Edit Ticket #{ticket_id}",
+                        "text": modal_title,
                         "emoji": True
                     },
                     "submit": {

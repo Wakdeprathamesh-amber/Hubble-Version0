@@ -206,6 +206,19 @@ def handle_view_edit_ticket_direct(payload):
             # Others get view-only modal
             modal_blocks = build_view_only_blocks(fields, ticket)
         
+        # Add channel context block for supply template
+        if template_key == 'supply':
+            channel_context = {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Channel:* {cfg.get('channel_name', 'supply')}"
+                    }
+                ]
+            }
+            modal_blocks.insert(0, channel_context)
+        
         # Store metadata
         metadata = json.dumps({
             'ticket_id': ticket_id,
@@ -213,13 +226,26 @@ def handle_view_edit_ticket_direct(payload):
             'channel_id': ticket.get('channel_id', channel_id)
         })
         
+        # Get custom modal title based on template
+        def get_modal_title(template_key, ticket_id, is_editable):
+            template_titles = {
+                'supply': 'Form: Supply Team',
+                'tech_default': 'Ticket',
+                # Add more template titles as needed
+            }
+            base_title = template_titles.get(template_key, 'Ticket')
+            action = "Edit" if is_editable else "View"
+            return f"{base_title} - {action} #{ticket_id}"
+        
+        modal_title = get_modal_title(template_key, ticket_id, (is_admin or is_creator))
+        
         # Create modal payload
         modal_view = {
             "type": "modal",
             "callback_id": "ticket_edit_modal",
             "title": {
                 "type": "plain_text",
-                "text": f"Edit Ticket #{ticket_id}" if (is_admin or is_creator) else f"View Ticket #{ticket_id}",
+                "text": modal_title,
                 "emoji": True
             },
             "close": {

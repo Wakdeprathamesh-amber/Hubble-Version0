@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Setup script for Fix Kar Slack Bot
+Setup script for Hubble Slack Bot
 This script helps configure environment variables and test the application
 """
 
@@ -91,7 +91,7 @@ def check_env_vars():
 
 def main():
     """Main setup function"""
-    print("🔧 Fix Kar Slack Bot Setup")
+    print("🔧 Hubble Slack Bot Setup")
     print("=" * 40)
     
     # Check dependencies

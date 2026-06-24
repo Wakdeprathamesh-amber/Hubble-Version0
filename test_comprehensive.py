@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive Test Script for Fix Kar Slack Bot
+Comprehensive Test Script for Hubble Slack Bot
 Tests all functionality including edge cases and regular scenarios
 """
 
@@ -43,7 +43,7 @@ class ComprehensiveTester:
             'warnings': []
         }
         
-        print("🧪 COMPREHENSIVE TEST SCRIPT FOR FIX KAR SLACK BOT")
+        print("🧪 COMPREHENSIVE TEST SCRIPT FOR HUBBLE SLACK BOT")
         print("=" * 60)
         
     def log_test(self, test_name, status, message=""):

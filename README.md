@@ -1,4 +1,4 @@
-# Fix Kar Slack Bot
+# Hubble Slack Bot
 
 A Slack bot that creates tickets from messages in a specific channel.
 

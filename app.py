@@ -969,7 +969,7 @@ def test_message():
 @app.route("/", methods=["GET"])
 def home():
     """Simple home endpoint to verify the server is running"""
-    return jsonify({"status": "ok", "message": "Fix Kar Slack Bot is running!"})
+    return jsonify({"status": "ok", "message": "Hubble Slack Bot is running!"})
 
 @app.route("/health", methods=["GET"])
 def health_check():

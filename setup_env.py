@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Environment Setup Script for Fix Kar Slack Bot
+Environment Setup Script for Hubble Slack Bot
 Helps set up environment variables for both local and production deployment
 """
 
@@ -74,7 +74,7 @@ def validate_google_credentials():
 
 def main():
     """Main setup function"""
-    print("🚀 Fix Kar Slack Bot - Environment Setup")
+    print("🚀 Hubble Slack Bot - Environment Setup")
     print("=" * 50)
     
     # Create template if it doesn't exist

@@ -1,4 +1,4 @@
-# 🚀 Deployment Guide for Fix Kar Slack Bot
+# 🚀 Deployment Guide for Hubble Slack Bot
 
 ## 📋 Pre-Deployment Checklist
 
@@ -79,7 +79,7 @@ heroku logs --tail
 1. Click "New Web Service"
 2. Select your repository
 3. Configure:
-   - **Name**: `fix-kar-slack-bot`
+   - **Name**: `hubble-slack-bot`
    - **Environment**: `Python 3`
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `gunicorn wsgi:app`

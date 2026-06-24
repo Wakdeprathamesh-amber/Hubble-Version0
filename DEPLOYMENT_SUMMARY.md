@@ -94,7 +94,7 @@ gunicorn wsgi:app
    git init
    git add .
    git commit -m "Ready for production deployment"
-   git remote add origin https://github.com/yourusername/fix-kar-slack-bot.git
+   git remote add origin https://github.com/yourusername/hubble-slack-bot.git
    git push -u origin main
    ```
 

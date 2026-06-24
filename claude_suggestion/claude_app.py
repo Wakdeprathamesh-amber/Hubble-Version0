@@ -260,7 +260,7 @@ def home():
     logger.info("Home endpoint called")
     return jsonify({
         "status": "ok", 
-        "message": "Fix Kar Slack Bot is running!",
+        "message": "Hubble Slack Bot is running!",
         "timestamp": datetime.now().isoformat(),
         "endpoints": [
             "/slack/events (POST) - Slack event handler",

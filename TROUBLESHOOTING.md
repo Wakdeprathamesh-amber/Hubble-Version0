@@ -14,7 +14,7 @@
 Go to your Slack App settings and update the Event Subscriptions:
 
 1. **Visit**: https://api.slack.com/apps
-2. **Select your app**: "Fix Kar" (or your app name)
+2. **Select your app**: "Hubble" (or your app name)
 3. **Go to**: Event Subscriptions
 4. **Update Request URL** (if not already set):
    ```

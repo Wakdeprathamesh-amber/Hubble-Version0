@@ -1,4 +1,4 @@
-# 🚀 Deployment Guide for Fix Kar Slack Bot
+# 🚀 Deployment Guide for Hubble Slack Bot
 
 ## 📋 Pre-Deployment Checklist
 
@@ -219,3 +219,37 @@ After deployment, verify:
 - [ ] Google Sheets are updated
 - [ ] Thread replies work
 - [ ] No errors in logs 
+
+
+---
+
+## Appendix: Deployment Changes Summary
+
+*(Merged from the original DEPLOYMENT_SUMMARY.md)*
+
+### Files for Production Deployment
+
+| File | Purpose |
+|------|---------|
+| `wsgi.py` | Production WSGI entry point for gunicorn |
+| `Procfile` | Process definition (gunicorn with 1 worker) |
+| `runtime.txt` | Python version specification |
+| `.gitignore` | Excludes secrets and build artifacts |
+| `setup_env.py` | Environment validation helper |
+
+### Dual Environment Support
+
+- **Local:** `python app.py` — runs on port 3000 with debug mode
+- **Production:** `gunicorn wsgi:app --workers 1` — uses `PORT` env var, no debug
+
+### Verification Checklist
+
+- [ ] All files committed to git
+- [ ] Environment variables set in cloud platform
+- [ ] Google credentials configured (JSON string in `GOOGLE_CREDENTIALS` env var)
+- [ ] Slack webhook URLs updated to production domain
+- [ ] Health check (`/health`) returns 200
+- [ ] Bot responds to messages and creates tickets
+- [ ] Modals work correctly
+- [ ] Google Sheets integration works
+- [ ] Thread replies and internal channel sync work

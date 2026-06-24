@@ -1,102 +1,131 @@
-# Fix Kar Slack Bot
+# Hubble — Slack Ticketing Bot
 
-A Slack bot that creates tickets from messages in a specific channel.
+Hubble turns Slack messages into trackable tickets backed by Google Sheets. Any message posted in a monitored channel automatically creates a ticket, replies in a thread, posts to an internal team channel, and keeps everything in sync.
 
-## Setup Instructions
+## Overview
+
+- **Automatic ticket creation** from any message in configured channels
+- **Multi-channel support** with per-channel configuration (priorities, templates, admins)
+- **Internal team channels** with rich ticket cards, assign-to-me, and status toggle
+- **Bidirectional thread sync** between public and internal channels
+- **Dynamic modal forms** for viewing/editing tickets (admin and creator permissions)
+- **Google Sheets backend** for zero-infrastructure persistence
+
+## Quick Start
 
 ### Prerequisites
 
-- Python 3.7 or higher
-- A Slack workspace with permission to add apps
-- Slack app with appropriate permissions
+- Python 3.9+
+- A Slack workspace with admin access to create apps
+- A Google Cloud service account with Sheets API enabled
+- A Google Spreadsheet (shared with the service account)
 
-### Slack App Configuration
-
-1. Create a new Slack app at https://api.slack.com/apps
-2. Add the following Bot Token Scopes under "OAuth & Permissions":
-   - `chat:write`
-   - `channels:history` (or `groups:history` for private channels)
-   - `app_mentions:read`
-
-3. Enable Event Subscriptions and subscribe to the `message.channels` event
-4. Install the app to your workspace
-
-### Environment Setup
-
-1. Clone this repository
-2. Create a virtual environment: `python -m venv venv`
-3. Activate the virtual environment:
-   - Windows: `venv\Scripts\activate`
-   - macOS/Linux: `source venv/bin/activate`
-4. Install dependencies: `pip install -r requirements.txt`
-5. Create a `.env` file in the root directory with the following variables:
+### Local Setup
 
 ```bash
-# Slack Bot Configuration
-SLACK_BOT_TOKEN=xoxb-your-bot-token-here
-SLACK_SIGNING_SECRET=your-signing-secret-here
-TARGET_CHANNEL_ID=C1234567890
+# Clone and enter the repo
+git clone <repo-url> && cd Hubble-Version0
 
-# Google Sheets Configuration
-GOOGLE_CREDENTIALS_PATH=credentials.json
-GOOGLE_SPREADSHEET_ID=your-spreadsheet-id-here
+# Create and activate a virtual environment
+python -m venv venv
+source venv/bin/activate  # macOS/Linux
 
-# Server Configuration (optional)
-PORT=3000
-```
+# Install dependencies
+pip install -r requirements.txt
 
-**Required Environment Variables:**
-- `SLACK_BOT_TOKEN`: Your Slack bot token (starts with `xoxb-`)
-- `SLACK_SIGNING_SECRET`: Your Slack app signing secret
-- `TARGET_CHANNEL_ID`: The channel ID where tickets should be created from
-- `GOOGLE_CREDENTIALS_PATH`: Path to your Google service account credentials JSON file
-- `GOOGLE_SPREADSHEET_ID`: The ID of your Google Spreadsheet for ticket tracking
+# Copy the env template and fill in your values
+cp .env.template .env
+# Edit .env with your tokens / IDs
 
-### Running the Application
-
-```bash
+# Run locally
 python app.py
 ```
 
-## 🚀 Deployment
+The server starts on port 3000 by default. Use ngrok or Cloudflare Tunnel to expose it for Slack event delivery during development.
 
-### Environment Setup Helper
-Run the setup script to check your environment:
-```bash
-python setup_env.py
-```
+### Environment Variables
 
-### Quick Deployment Options
+| Variable | Description |
+|----------|-------------|
+| `SLACK_BOT_TOKEN` | Bot token (`xoxb-...`) |
+| `SLACK_SIGNING_SECRET` | App signing secret |
+| `TARGET_CHANNEL_ID` | (Legacy) Primary monitored channel |
+| `GOOGLE_CREDENTIALS_PATH` | Path to service account JSON (local dev) |
+| `GOOGLE_CREDENTIALS` | JSON string of credentials (production) |
+| `GOOGLE_SPREADSHEET_ID` | Spreadsheet ID for ticket storage |
+| `ADMIN_USER_IDS` | Comma-separated global admin Slack user IDs |
+| `PORT` | Server port (default: 3000) |
 
-#### Option 1: Heroku
-```bash
-# Install Heroku CLI
-brew install heroku/brew/heroku
+## Architecture
 
-# Login and create app
-heroku login
-heroku create your-app-name
+See [docs/architecture.md](docs/architecture.md) for a full system diagram and component breakdown.
 
-# Set environment variables
-heroku config:set SLACK_BOT_TOKEN=xoxb-your-token
-heroku config:set SLACK_SIGNING_SECRET=your-secret
-heroku config:set GOOGLE_CREDENTIALS_PATH=path/to/credentials.json
-heroku config:set GOOGLE_SPREADSHEET_ID=your-sheet-id
-heroku config:set TARGET_CHANNEL_ID=your-channel-id
+**TL;DR:** Slack events → Flask + Slack Bolt → TicketService → Google Sheets. Thread replies and internal channel cards are posted via the Slack Web API.
 
-# Deploy
-git push heroku main
-```
+## Deployment (Render)
 
-#### Option 2: Render
-1. Connect your GitHub repository to Render
-2. Create a new Web Service
-3. Set environment variables in the dashboard
-4. Deploy automatically
+The app is deployed on Render as a Web Service.
 
-### Monitoring
-- **Health Check**: `https://your-app.herokuapp.com/health`
-- **Home Page**: `https://your-app.herokuapp.com/`
-- **Logs**: `heroku logs --tail`
+- **Build command:** `pip install -r requirements.txt`
+- **Start command:** `gunicorn wsgi:app --workers 1`
+- **Health check:** `GET /health`
 
-For detailed deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md).
+Set all environment variables in the Render dashboard. Use `GOOGLE_CREDENTIALS` (JSON string) instead of a file path in production.
+
+See [docs/deployment.md](docs/deployment.md) for the full deployment runbook.
+
+## Configuration
+
+### Slack App Settings
+
+| Setting | Value |
+|---------|-------|
+| Event Subscriptions Request URL | `https://<your-domain>/slack/events` |
+| Interactivity Request URL | `https://<your-domain>/slack/interactive` |
+| Bot Token Scopes | `chat:write`, `channels:history`, `groups:history`, `users:read`, `commands` |
+| Subscribed Bot Events | `message.channels`, `message.groups` |
+
+### Google Sheets Structure
+
+- **Tickets tab:** Main ticket data (A:N columns)
+- **Config tab:** Per-channel settings (channel ID, admins, default assignee, priorities, modal template, internal channel)
+- **Modal Templates tab:** Dynamic form field definitions per template key
+
+See [docs/setup/multi-channel.md](docs/setup/multi-channel.md) for channel configuration details.
+
+## Development
+
+### Branch Strategy
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Production-ready code |
+| `fix/*` | Bug fixes |
+| `feat/*` | New features |
+| `chore/*` | Docs, hygiene, non-runtime changes |
+
+All work happens on feature branches. PRs to `main` require review.
+
+### No CI Yet
+
+There is currently no automated CI pipeline. Test files in the repo are manual run scripts that require live credentials. Adding pytest + GitHub Actions CI is on the roadmap.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `app.py` | Flask routes, direct interactive handlers |
+| `slack_handler.py` | Slack Bolt event/action handlers, deduplication |
+| `ticket_service.py` | Ticket CRUD operations |
+| `sheets_service.py` | Google Sheets API interactions |
+| `internal_channel_handler.py` | Internal channel card formatting |
+| `modal_builder.py` | Dynamic modal form construction |
+| `modal_submission_handler.py` | Modal submit processing |
+
+## Troubleshooting
+
+See [docs/troubleshooting.md](docs/troubleshooting.md) for common issues and debugging steps.
+
+## Roadmap
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the phased improvement plan covering dual-interactivity resolution, ticket ID safety, Sheets caching, file decomposition, and CI.

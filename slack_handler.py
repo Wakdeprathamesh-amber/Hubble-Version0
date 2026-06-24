@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+import time
+import threading
 from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
 from datetime import datetime
@@ -10,15 +12,71 @@ from internal_channel_handler import post_to_internal_channel, update_internal_c
 
 logger = logging.getLogger(__name__)
 
+
+class EventDeduplicator:
+    """TTL-based cache to deduplicate Slack event_ids and prevent duplicate ticket creation."""
+
+    def __init__(self, ttl_seconds: int = 300):
+        self._seen: dict = {}  # event_id -> timestamp
+        self._lock = threading.Lock()
+        self._ttl = ttl_seconds
+
+    def is_duplicate(self, event_id: str) -> bool:
+        """Return True if event_id was already seen within the TTL window."""
+        now = time.time()
+        with self._lock:
+            self._evict_expired(now)
+            if event_id in self._seen:
+                return True
+            self._seen[event_id] = now
+            return False
+
+    def _evict_expired(self, now: float):
+        """Remove entries older than TTL."""
+        expired = [eid for eid, ts in self._seen.items() if now - ts > self._ttl]
+        for eid in expired:
+            del self._seen[eid]
+
+
+class MessageDeduplicator:
+    """Tracks channel+ts pairs to prevent duplicate ticket creation for the same message."""
+
+    def __init__(self, ttl_seconds: int = 600):
+        self._seen: dict = {}  # "channel_id:ts" -> timestamp
+        self._lock = threading.Lock()
+        self._ttl = ttl_seconds
+
+    def is_duplicate(self, channel_id: str, message_ts: str) -> bool:
+        """Return True if a ticket was already created for this channel+ts."""
+        key = f"{channel_id}:{message_ts}"
+        now = time.time()
+        with self._lock:
+            self._evict_expired(now)
+            if key in self._seen:
+                return True
+            self._seen[key] = now
+            return False
+
+    def _evict_expired(self, now: float):
+        expired = [k for k, ts in self._seen.items() if now - ts > self._ttl]
+        for k in expired:
+            del self._seen[k]
+
+
 class SlackHandler:
     def __init__(self, ticket_service):
         self.ticket_service = ticket_service
+
+        # Deduplication caches
+        self._event_dedup = EventDeduplicator(ttl_seconds=300)  # 5 min TTL
+        self._message_dedup = MessageDeduplicator(ttl_seconds=600)  # 10 min TTL
         
         # Initialize the Slack app with environment variables
+        # process_before_response=False: ack Slack immediately, run handler in background thread
         self.slack_app = App(
             token=os.environ.get("SLACK_BOT_TOKEN"),
             signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
-            process_before_response=True,
+            process_before_response=False,
             request_verification_enabled=False  # Disable request verification since we handle it in Flask
         )
         
@@ -157,6 +215,16 @@ class SlackHandler:
         @self.slack_app.event("message")
         def handle_message_events(body, say, logger):
             try:
+                # --- DEDUP LAYER 1: Slack event_id deduplication ---
+                event_id = body.get("event_id", "")
+                if event_id and self._event_dedup.is_duplicate(event_id):
+                    logger.info(f"🔁 DUPLICATE EVENT IGNORED: event_id={event_id} (already processed)")
+                    return
+
+                # --- DEDUP LAYER 2: Slack retry header ---
+                # Note: Slack Bolt passes headers through body context in some setups.
+                # The retry check is also handled at the Flask level in app.py (see X-Slack-Retry-Num).
+
                 # Extract event data
                 event = body.get("event", {})
                 channel_id = event.get("channel")
@@ -306,15 +374,19 @@ class SlackHandler:
                 ):
                     logger.info(f"🎫 CREATING TICKET: Channel={channel_id}, User={user_id}, thread_ts={thread_ts}, ts={ts}")
                     
-                    # Check if a ticket already exists for this message timestamp (prevent duplicates)
+                    # --- DEDUP LAYER 3: channel_id + message_ts idempotency check (in-memory) ---
+                    if self._message_dedup.is_duplicate(channel_id, ts):
+                        logger.info(f"🔁 DUPLICATE MESSAGE IGNORED: channel={channel_id}, ts={ts} (ticket already being created)")
+                        return
+
+                    # --- DEDUP LAYER 4: Check Google Sheets for existing ticket with this thread_ts (safety net) ---
                     existing_tickets = self.ticket_service.get_all_tickets()
                     ticket_exists = False
                     for existing_ticket in existing_tickets:
-                        # Check if thread_ts matches this message's ts
                         existing_thread_ts = existing_ticket.get('thread_ts', '')
                         if existing_thread_ts == ts or existing_thread_ts == ts.replace('.', ''):
                             ticket_exists = True
-                            logger.warning(f"⚠️ Ticket already exists for message ts={ts}, skipping duplicate creation")
+                            logger.warning(f"🔁 DUPLICATE TICKET BLOCKED: Ticket already exists in Sheets for message ts={ts} (ticket #{existing_ticket.get('ticket_id')})")
                             break
                     
                     if ticket_exists:

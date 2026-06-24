@@ -56,6 +56,13 @@ def slack_events():
         return "", 200
     
     try:
+        # --- RETRY GUARD: Short-circuit Slack retries immediately ---
+        retry_num = request.headers.get("X-Slack-Retry-Num")
+        retry_reason = request.headers.get("X-Slack-Retry-Reason", "")
+        if retry_num:
+            logger.info(f"🔁 SLACK RETRY IGNORED: X-Slack-Retry-Num={retry_num}, reason={retry_reason} — acking with 200")
+            return jsonify({"ok": True}), 200
+
         # Log basic request info
         logger.info(f"📨 SLACK EVENT: {request.method} {request.path}")
         
